@@ -10,7 +10,8 @@
 	} from '@lucide/svelte';
 	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
 
-	const REFRESH_MS = 10 * 60 * 1000;
+	const AUTO_REFRESH_SETTLE_MS = 1000;
+	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 
 	let payload = $state<UsagePayload | null>(null);
@@ -19,25 +20,42 @@
 	let error = $state<string | null>(null);
 	let now = $state(new Date());
 	let autoRefresh = $state(true);
+	let refreshCooldownUntil = $state<number | null>(null);
+	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
 
 	const providers = $derived(payload?.providers ?? []);
+	const nextRefreshCountdown = $derived(formatRefreshCountdown(payload?.nextRefreshAt ?? null));
+	const refreshCooldownCountdown = $derived(formatCountdown(refreshCooldownUntil));
+	const refreshLocked = $derived(refreshing || isRefreshCoolingDown(refreshCooldownUntil));
+	let initialRefreshStarted = false;
 
-	onMount(() => {
-		void loadUsage();
-		const refreshTimer = window.setInterval(() => {
-			if (autoRefresh && !refreshing) void refreshUsage();
-		}, REFRESH_MS);
-		const clockTimer = window.setInterval(() => {
-			now = new Date();
-		}, 30_000);
+	$effect(() => {
+		if (!autoRefresh || refreshing || refreshLocked || !payload?.nextRefreshAt) return;
+
+		const delay = Math.max(
+			0,
+			Date.parse(payload.nextRefreshAt) - Date.now() + AUTO_REFRESH_SETTLE_MS
+		);
+		const timer = window.setTimeout(() => void refreshUsage(), delay);
 
 		return () => {
-			window.clearInterval(refreshTimer);
+			window.clearTimeout(timer);
+		};
+	});
+
+	onMount(() => {
+		restoreRefreshCooldown();
+		void loadUsage({ refreshAfterLoad: true });
+		const clockTimer = window.setInterval(() => {
+			now = new Date();
+		}, 1000);
+
+		return () => {
 			window.clearInterval(clockTimer);
 		};
 	});
 
-	async function loadUsage() {
+	async function loadUsage(options: { refreshAfterLoad?: boolean } = {}) {
 		loading = true;
 		error = null;
 
@@ -45,6 +63,13 @@
 			const response = await fetch('/api/usage');
 			if (!response.ok) throw new Error(`Usage request failed: ${response.status}`);
 			payload = (await response.json()) as UsagePayload;
+			if (options.refreshAfterLoad && !initialRefreshStarted) {
+				if (isRefreshCoolingDown(refreshCooldownUntil)) {
+					return;
+				}
+				initialRefreshStarted = true;
+				window.setTimeout(() => void refreshUsage('auto'), 250);
+			}
 		} catch (requestError) {
 			error = requestError instanceof Error ? requestError.message : 'Failed to load usage data.';
 		} finally {
@@ -52,9 +77,15 @@
 		}
 	}
 
-	async function refreshUsage() {
+	async function refreshUsage(mode: 'manual' | 'auto' = 'manual') {
+		if (refreshing || isRefreshCoolingDown(refreshCooldownUntil)) {
+			return;
+		}
+
+		refreshMode = mode;
 		refreshing = true;
 		error = null;
+		setRefreshCooldown(Date.now() + MANUAL_REFRESH_COOLDOWN_MS);
 
 		try {
 			const response = await fetch('/api/usage/refresh', { method: 'POST' });
@@ -66,6 +97,7 @@
 		} finally {
 			refreshing = false;
 			loading = false;
+			refreshMode = 'idle';
 		}
 	}
 
@@ -78,6 +110,42 @@
 			month: 'short',
 			day: 'numeric'
 		}).format(new Date(value));
+	}
+
+	function formatClock(value: Date) {
+		return new Intl.DateTimeFormat('en', {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+			hour12: false
+		}).format(value);
+	}
+
+	function formatClockDate(value: Date) {
+		return new Intl.DateTimeFormat('en', {
+			weekday: 'short',
+			month: 'short',
+			day: 'numeric'
+		}).format(value);
+	}
+
+	function formatTimeOnly(value: string | null) {
+		if (!value) return '--:--:--';
+		return new Intl.DateTimeFormat('en', {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+			hour12: false
+		}).format(new Date(value));
+	}
+
+	function formatRefreshCountdown(value: string | null) {
+		if (!value) return '--m --s';
+		const diff = Math.max(0, Date.parse(value) - now.getTime());
+		const totalSeconds = Math.floor(diff / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 	}
 
 	function percentLabel(value: number | null) {
@@ -105,12 +173,15 @@
 	}
 
 	function usageText(window: UsageWindow) {
-		if (window.used === null || window.limit === null) return 'Limit unavailable';
+		if (window.used === null || window.limit === null) return null;
 		return `${formatAmount(window.used)} / ${formatAmount(window.limit)}`;
 	}
 
 	function resetParts(window: UsageWindow) {
-		const text = countdownText(window);
+		return resetPartsFromText(countdownText(window));
+	}
+
+	function resetPartsFromText(text: string) {
 		const match = text.match(/(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i);
 
 		if (!match || !match[0].trim()) {
@@ -130,7 +201,7 @@
 	function countdownText(window: UsageWindow) {
 		if (window.resetAt) {
 			const diff = Date.parse(window.resetAt) - now.getTime();
-			if (diff <= 0) return '0d 0h 0m';
+			if (diff <= 0) return '0h 0m';
 
 			const minutes = Math.floor(diff / 60_000);
 			const days = Math.floor(minutes / 1440);
@@ -159,6 +230,36 @@
 	function openUsageUrl(url: string) {
 		window.open(url, '_blank', 'noopener,noreferrer');
 	}
+
+	function formatCountdown(timestamp: number | null) {
+		if (!timestamp) return null;
+		const diff = Math.max(0, timestamp - now.getTime());
+		const totalSeconds = Math.floor(diff / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+	}
+
+	function isRefreshCoolingDown(timestamp: number | null) {
+		return timestamp !== null && timestamp > now.getTime();
+	}
+
+	function setRefreshCooldown(timestamp: number) {
+		refreshCooldownUntil = timestamp;
+		localStorage.setItem('usage-refresh-cooldown-until', String(timestamp));
+	}
+
+	function restoreRefreshCooldown() {
+		const stored = localStorage.getItem('usage-refresh-cooldown-until');
+		if (!stored) return;
+
+		const parsed = Number(stored);
+		if (Number.isFinite(parsed) && parsed > Date.now()) {
+			refreshCooldownUntil = parsed;
+		} else {
+			localStorage.removeItem('usage-refresh-cooldown-until');
+		}
+	}
 </script>
 
 <svelte:head>
@@ -166,53 +267,83 @@
 </svelte:head>
 
 <main class="min-h-screen bg-background text-foreground">
-	<section class="border-b bg-muted/30">
+	<section class="border-b">
 		<div class="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-6 sm:px-8 lg:px-10">
-			<div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-				<div>
-					<div class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-						<Activity class="size-4" />
-						<span>Local CLI telemetry</span>
+			<div class="grid w-full gap-4 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
+				<div class="flex items-center gap-3 justify-self-start">
+					<div class="flex size-11 items-center justify-center rounded-md text-cyan-200">
+						<Activity class="size-5" />
 					</div>
-					<h1 class="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-						AI Usage Dashboard
-					</h1>
+					<div>
+						<h1 class="text-xl font-semibold text-foreground sm:text-2xl">AI Usage</h1>
+					</div>
 				</div>
 
-				<div
-					class="flex flex-wrap items-center gap-2 rounded-md border bg-background/70 p-1.5 shadow-sm"
-				>
-					<div class="px-3 py-1.5 text-sm text-muted-foreground">
-						<span class="text-muted-foreground/70">Updated</span>
-						<span class="ml-2 text-foreground">{formatDateTime(payload?.generatedAt ?? null)}</span>
-					</div>
-					<button
-						type="button"
-						role="switch"
-						aria-checked={autoRefresh}
-						class="inline-flex h-9 items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
-						onclick={() => {
-							autoRefresh = !autoRefresh;
-						}}
+				<div class="flex flex-wrap items-center justify-center gap-4 justify-self-center">
+					<div
+						class="flex min-h-20 min-w-64 flex-col items-center justify-center px-5 py-2 text-center"
 					>
-						<span
-							class={`relative inline-flex h-5 w-9 items-center rounded-full transition ${autoRefresh ? 'bg-cyan-500/90' : 'bg-muted-foreground/30'}`}
+						<div class="text-xs font-medium text-cyan-200/70">{formatClockDate(now)}</div>
+						<div
+							class="w-full text-center font-mono text-4xl leading-none font-semibold text-cyan-100 tabular-nums drop-shadow-sm sm:text-5xl"
+						>
+							{formatClock(now)}
+						</div>
+						<div class="mt-1 text-[11px] text-muted-foreground">
+							Updated
+							<span class="font-mono text-cyan-200/80 tabular-nums">
+								{formatTimeOnly(payload?.generatedAt ?? null)}
+							</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="flex items-center justify-center gap-2 justify-self-end">
+					<div class="flex items-center gap-2">
+						<button
+							type="button"
+							role="switch"
+							aria-checked={autoRefresh}
+							class="inline-flex h-10 w-40 shrink-0 cursor-pointer items-center gap-2 overflow-hidden rounded-md border border-cyan-300/15 px-3 text-sm font-medium text-cyan-50/80 transition hover:border-cyan-300/30 hover:text-cyan-50 active:scale-[0.98]"
+							onclick={() => {
+								autoRefresh = !autoRefresh;
+							}}
 						>
 							<span
-								class={`size-4 rounded-full bg-background shadow-sm transition ${autoRefresh ? 'translate-x-4' : 'translate-x-0.5'}`}
-							></span>
-						</span>
-						<span>10m auto</span>
-					</button>
-					<button
-						type="button"
-						class="inline-flex h-9 items-center gap-2 rounded-md bg-foreground px-4 text-sm font-semibold text-background shadow-sm transition hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-60"
-						disabled={refreshing}
-						onclick={() => void refreshUsage()}
-					>
-						<RefreshCcw class={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
-						Refresh
-					</button>
+								class={`relative inline-flex h-5 w-9 items-center rounded-full transition ${autoRefresh ? 'bg-cyan-500/90' : 'bg-muted-foreground/30'}`}
+							>
+								<span
+									class={`size-4 rounded-full bg-background shadow-sm transition ${autoRefresh ? 'translate-x-4' : 'translate-x-0.5'}`}
+								></span>
+							</span>
+							<span class="w-8 text-xs">Auto</span>
+							<span class="w-16 font-mono text-xs text-cyan-300 tabular-nums">
+								{refreshing && refreshMode === 'auto' ? 'Refreshing' : nextRefreshCountdown}
+							</span>
+						</button>
+						<button
+							type="button"
+							class="inline-flex h-10 w-36 shrink-0 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-md border border-violet-300/20 px-3.5 text-xs font-semibold text-violet-100 transition hover:border-violet-300/40 hover:bg-violet-500/10 hover:text-violet-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+							disabled={refreshLocked}
+							onclick={() => void refreshUsage('manual')}
+						>
+							<RefreshCcw
+								class={`size-3.5 text-violet-200 ${refreshing ? 'animate-spin motion-safe:animate-spin' : ''}`}
+							/>
+							<span class="min-w-12 text-center whitespace-nowrap">
+								{refreshing ? 'Working' : 'Refresh'}
+							</span>
+							<span
+								class="min-w-12 text-right font-mono text-[11px] text-violet-200/70 tabular-nums"
+							>
+								{#if !refreshing && refreshCooldownCountdown}
+									{refreshCooldownCountdown}
+								{:else}
+									&nbsp;
+								{/if}
+							</span>
+						</button>
+					</div>
 				</div>
 			</div>
 
@@ -235,7 +366,7 @@
 		{:else}
 			<div class="grid gap-4 lg:grid-cols-3">
 				{#each providers as provider (provider.provider)}
-					<article class="rounded-md border bg-card p-5 shadow-sm">
+					<article class="flex h-full flex-col rounded-md border bg-card p-5 shadow-sm">
 						<div class="flex items-start justify-between gap-3">
 							<div>
 								<div class="flex items-center gap-2 text-sm text-muted-foreground">
@@ -252,17 +383,21 @@
 							</span>
 						</div>
 
-						<div class="mt-5 grid gap-4">
+						<div class="mt-5 grid gap-3">
 							{#if provider.provider !== 'gemini'}
 								{#each WINDOW_ORDER as windowId (windowId)}
 									{@const usageWindow = provider.windows[windowId]}
-									<div class="rounded-md border bg-background p-4">
+									<div
+										class="flex min-h-32 flex-col justify-between rounded-md border bg-background p-4"
+									>
 										<div class="flex items-center justify-between gap-3">
 											<div>
 												<div class="text-sm font-medium">{usageWindow.label}</div>
-												<div class="mt-1 text-xs text-muted-foreground">
-													{usageText(usageWindow)}
-												</div>
+												{#if usageText(usageWindow)}
+													<div class="mt-1 text-xs text-muted-foreground">
+														{usageText(usageWindow)}
+													</div>
+												{/if}
 											</div>
 											<div class="text-right">
 												<div
@@ -284,12 +419,14 @@
 											></div>
 										</div>
 
-										<div class="mt-3 flex items-center justify-between gap-3 text-xs">
-											<div class="flex items-center gap-1 text-muted-foreground">
-												<Clock3 class="size-3.5" />
-												<span>Reset</span>
+										<div class="mt-3 flex items-center justify-between gap-3 text-[11px]">
+											<div class="flex items-center gap-1.5 text-foreground/60">
+												<Clock3 class="size-3" />
+												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
 											</div>
-											<div class="flex items-center gap-1 font-medium">
+											<div
+												class="flex items-center gap-1 font-mono text-[12px] font-semibold text-foreground/85"
+											>
 												{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
 													<span class={part.tone}>{part.value}{part.unit}</span>
 												{/each}
@@ -297,48 +434,65 @@
 										</div>
 									</div>
 								{/each}
+								<div aria-hidden="true" class="min-h-32"></div>
 							{/if}
 
 							{#if (provider.modelUsages ?? []).length > 0}
-								<div class="rounded-md border bg-background p-4">
-									<div class="mb-3 text-sm font-medium">Model usage</div>
-									<div class="grid gap-3">
-										{#each provider.modelUsages ?? [] as model (model.label)}
+								{#each provider.modelUsages ?? [] as model (model.label)}
+									<div
+										class="flex min-h-32 flex-col justify-between rounded-md border bg-background p-4"
+									>
+										<div class="flex items-center justify-between gap-3">
 											<div>
-												<div class="flex items-center justify-between gap-3 text-sm">
-													<span class="font-medium">{model.label}</span>
-													<span style={`color: ${heatColor(model.percent)}`}>
-														{percentLabel(model.percent)}
-													</span>
-												</div>
-												<div class="relative mt-2 h-2 overflow-hidden rounded-full bg-muted">
-													<div
-														class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"
-													></div>
-													<div
-														class="h-full rounded-full transition-all"
-														style={`width: ${barWidth(model.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(model.percent)});`}
-													></div>
-												</div>
+												<div class="text-sm font-medium">{model.label}</div>
+												<div class="mt-1 text-xs text-muted-foreground">Model usage</div>
+											</div>
+											<div class="text-right">
 												<div
-													class="mt-1 flex items-center justify-between text-xs text-muted-foreground"
+													class="text-2xl font-semibold"
+													style={`color: ${heatColor(model.percent)}`}
 												>
-													<span>Reset</span>
-													<span>{model.remainingText ?? formatDateTime(model.resetAt)}</span>
+													{percentLabel(model.percent)}
 												</div>
 											</div>
-										{/each}
+										</div>
+
+										<div class="relative mt-4 h-3 overflow-hidden rounded-full bg-muted">
+											<div
+												class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"
+											></div>
+											<div
+												class="h-full rounded-full transition-all"
+												style={`width: ${barWidth(model.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(model.percent)});`}
+											></div>
+										</div>
+
+										<div class="mt-3 flex items-center justify-between gap-3 text-[11px]">
+											<div class="flex items-center gap-1.5 text-foreground/60">
+												<Clock3 class="size-3" />
+												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
+											</div>
+											<div
+												class="flex items-center gap-1 font-mono text-[12px] font-semibold text-foreground/85"
+											>
+												{#each resetPartsFromText(model.remainingText ?? formatDateTime(model.resetAt)) as part (`${model.label}-${part.unit || part.value}`)}
+													<span class={part.tone}>{part.value}{part.unit}</span>
+												{/each}
+											</div>
+										</div>
 									</div>
-								</div>
+								{/each}
 							{/if}
 						</div>
 
-						<div class="mt-4 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+						<div
+							class="mt-auto flex items-center justify-between gap-3 pt-4 text-xs text-muted-foreground"
+						>
 							<span>{provider.message}</span>
 							{#if provider.usageUrl}
 								<button
 									type="button"
-									class="inline-flex items-center gap-1 hover:text-foreground"
+									class="inline-flex cursor-pointer items-center gap-1 text-cyan-300/80 transition hover:text-cyan-200 active:scale-[0.98]"
 									onclick={() => provider.usageUrl && openUsageUrl(provider.usageUrl)}
 								>
 									Web
