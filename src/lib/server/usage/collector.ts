@@ -1,11 +1,8 @@
 import { spawn } from 'node:child_process';
 import { parseProviderUsage } from './parser';
-import { PROVIDERS, type ProviderId, type ProviderUsage } from '$lib/usage';
+import { CLI_COLLECTION_CONFIG, PROVIDERS, type ProviderId, type ProviderUsage } from '$lib/usage';
 
-type PtyModule = typeof import('@homebridge/node-pty-prebuilt-multiarch');
-
-const COMMAND_DELAY_MS = 1200;
-const CAPTURE_TIMEOUT_MS = 14_000;
+type PtyModule = typeof import('node-pty');
 
 export async function collectAllUsage(): Promise<ProviderUsage[]> {
 	const results = await Promise.all(PROVIDERS.map((provider) => collectProvider(provider.id)));
@@ -19,7 +16,7 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	}
 
 	try {
-		const output = await runSlashCommand(provider.command, provider.slashCommand);
+		const output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
 		return parseProviderUsage(provider.id, output);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown collection error';
@@ -27,32 +24,42 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	}
 }
 
-async function runSlashCommand(command: string, slashCommand: string) {
+async function runSlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
 	try {
-		return await runPtySlashCommand(command, slashCommand);
+		return await runPtySlashCommand(providerId, command, slashCommand);
 	} catch {
 		return await runPipeSlashCommand(command, slashCommand);
 	}
 }
 
-async function runPtySlashCommand(command: string, slashCommand: string) {
-	const pty = (await import('@homebridge/node-pty-prebuilt-multiarch')) as PtyModule;
+async function runPtySlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
+	const pty = (await import('node-pty')) as PtyModule;
 
 	return await new Promise<string>((resolve, reject) => {
 		let output = '';
 		let settled = false;
+		let wroteCommand = false;
+		let wroteSlashCommand = false;
+		let slashReadyTimer: NodeJS.Timeout | undefined;
 
-		const terminal = pty.spawn(command, [], {
-			name: 'xterm-256color',
-			cols: 120,
-			rows: 36,
-			cwd: process.cwd(),
-			env: process.env
-		});
+		const terminal = pty.spawn(
+			CLI_COLLECTION_CONFIG.shell.command,
+			[...CLI_COLLECTION_CONFIG.shell.args],
+			{
+				name: 'xterm-256color',
+				cols: 120,
+				rows: 36,
+				cwd: CLI_COLLECTION_CONFIG.workingDirectory,
+				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
+				useConptyDll: true
+			}
+		);
 
 		const cleanup = () => {
-			clearTimeout(commandTimer);
+			clearTimeout(shellCommandTimer);
+			if (slashCommandTimer) clearTimeout(slashCommandTimer);
 			clearTimeout(timeoutTimer);
+			if (slashReadyTimer) clearTimeout(slashReadyTimer);
 			try {
 				terminal.kill();
 			} catch {
@@ -74,25 +81,95 @@ async function runPtySlashCommand(command: string, slashCommand: string) {
 			reject(new Error(message));
 		};
 
+		const writeCommand = () => {
+			if (wroteCommand) return;
+			wroteCommand = true;
+			try {
+				terminal.write(`${command}\r`);
+			} catch (error) {
+				fail(error instanceof Error ? error.message : 'Failed to write CLI command.');
+			}
+		};
+
+		const writeSlashCommand = () => {
+			if (wroteSlashCommand) return;
+			wroteSlashCommand = true;
+			try {
+				terminal.write(`${slashCommand}\r`);
+				if (providerId === 'codex') {
+					setTimeout(() => terminal.write('\r'), 400);
+				}
+				if (providerId === 'gemini') {
+					setTimeout(() => {
+						const tail = output.slice(-3000);
+						if (
+							new RegExp(`>\\s*${escapeRegExp(slashCommand)}`).test(tail) &&
+							!/Select Model|Model usage/i.test(tail)
+						) {
+							terminal.write('\r');
+						}
+					}, 800);
+				}
+			} catch (error) {
+				fail(error instanceof Error ? error.message : 'Failed to write slash command.');
+			}
+		};
+
 		terminal.onData((chunk) => {
 			output += chunk;
 			if (output.length > 20_000) {
 				output = output.slice(-20_000);
 			}
+
+			if (!wroteCommand && isShellReady(output)) {
+				writeCommand();
+			}
+
+			if (wroteCommand && !wroteSlashCommand && isCliReady(providerId, output)) {
+				slashReadyTimer ??= setTimeout(writeSlashCommand, 350);
+			}
 		});
 
 		terminal.onExit(() => finish(output));
 
-		const commandTimer = setTimeout(() => {
-			try {
-				terminal.write(`${slashCommand}\r`);
-			} catch (error) {
-				fail(error instanceof Error ? error.message : 'Failed to write slash command.');
-			}
-		}, COMMAND_DELAY_MS);
+		const shellCommandTimer = setTimeout(writeCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs);
+		const slashCommandTimer =
+			providerId === 'gemini'
+				? undefined
+				: setTimeout(
+						writeSlashCommand,
+						CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
+					);
 
-		const timeoutTimer = setTimeout(() => finish(output), CAPTURE_TIMEOUT_MS);
+		const timeoutTimer = setTimeout(() => finish(output), CLI_COLLECTION_CONFIG.captureTimeoutMs);
 	});
+}
+
+function isShellReady(output: string) {
+	return /PS\s+[A-Z]:\\[^>]*>\s*$/i.test(output.slice(-500));
+}
+
+function isCliReady(providerId: ProviderId, output: string) {
+	const tail = output.slice(-4000);
+	if (providerId === 'claude') {
+		return /\? for shortcuts|Advisor Tool|Try ["“]|Welcome back/i.test(tail);
+	}
+	if (providerId === 'codex') {
+		return (
+			/Use \/skills/i.test(tail) ||
+			(/gpt-[^\r\n]+ · [A-Z]:\\/i.test(tail) && !/Booting MCP server/i.test(tail))
+		);
+	}
+	return /Type your message|workspace\s+\(\/directory\)/i.test(tail);
+}
+
+function slashDelayMs(providerId: ProviderId) {
+	if (providerId === 'claude') return CLI_COLLECTION_CONFIG.commandDelayMs;
+	return Math.max(CLI_COLLECTION_CONFIG.commandDelayMs, 10_000);
+}
+
+function escapeRegExp(value: string) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function runPipeSlashCommand(command: string, slashCommand: string) {
@@ -101,8 +178,8 @@ async function runPipeSlashCommand(command: string, slashCommand: string) {
 		let settled = false;
 
 		const child = spawn(command, [], {
-			cwd: process.cwd(),
-			env: process.env,
+			cwd: CLI_COLLECTION_CONFIG.workingDirectory,
+			env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
 			shell: true,
 			windowsHide: true
 		});
@@ -144,8 +221,8 @@ async function runPipeSlashCommand(command: string, slashCommand: string) {
 			if (!child.stdin.writable) return;
 			child.stdin.write(`${slashCommand}\n`);
 			child.stdin.end();
-		}, COMMAND_DELAY_MS);
+		}, CLI_COLLECTION_CONFIG.commandDelayMs);
 
-		const timeoutTimer = setTimeout(finish, CAPTURE_TIMEOUT_MS);
+		const timeoutTimer = setTimeout(finish, CLI_COLLECTION_CONFIG.captureTimeoutMs);
 	});
 }

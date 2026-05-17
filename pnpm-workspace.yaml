@@ -1,4 +1,4 @@
 allowBuilds:
-  '@homebridge/node-pty-prebuilt-multiarch': false
   '@tailwindcss/oxide': true
   esbuild: true
+  node-pty: true

@@ -6,8 +6,7 @@
 		Clock3,
 		ExternalLink,
 		RefreshCcw,
-		Terminal,
-		Zap
+		Terminal
 	} from '@lucide/svelte';
 	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
 
@@ -19,13 +18,15 @@
 	let refreshing = $state(false);
 	let error = $state<string | null>(null);
 	let now = $state(new Date());
+	let autoRefresh = $state(true);
 
 	const providers = $derived(payload?.providers ?? []);
-	const history = $derived(payload?.history ?? []);
 
 	onMount(() => {
 		void loadUsage();
-		const refreshTimer = window.setInterval(() => void refreshUsage(), REFRESH_MS);
+		const refreshTimer = window.setInterval(() => {
+			if (autoRefresh && !refreshing) void refreshUsage();
+		}, REFRESH_MS);
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
 		}, 30_000);
@@ -79,12 +80,6 @@
 		}).format(new Date(value));
 	}
 
-	function formatBucket(value: string) {
-		return new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(
-			new Date(value)
-		);
-	}
-
 	function percentLabel(value: number | null) {
 		return value === null ? 'Unknown' : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
 	}
@@ -122,11 +117,14 @@
 			return [{ value: text, unit: '', tone: 'text-muted-foreground' }];
 		}
 
-		return [
-			{ value: match[1] ?? '0', unit: 'd', tone: 'text-sky-500' },
-			{ value: match[2] ?? '0', unit: 'h', tone: 'text-emerald-500' },
-			{ value: match[3] ?? '0', unit: 'm', tone: 'text-orange-500' }
+		const days = Number(match[1] ?? 0);
+		const parts = [
+			{ value: match[1] ?? '0', unit: 'd', tone: 'text-violet-400', visible: days > 0 },
+			{ value: match[2] ?? '0', unit: 'h', tone: 'text-cyan-400', visible: true },
+			{ value: match[3] ?? '0', unit: 'm', tone: 'text-amber-300', visible: true }
 		];
+
+		return parts.filter((part) => part.visible);
 	}
 
 	function countdownText(window: UsageWindow) {
@@ -138,7 +136,9 @@
 			const days = Math.floor(minutes / 1440);
 			const hours = Math.floor((minutes % 1440) / 60);
 			const remainingMinutes = minutes % 60;
-			return `${days}d ${hours}h ${remainingMinutes}m`;
+			return days > 0
+				? `${days}d ${hours}h ${remainingMinutes}m`
+				: `${hours}h ${remainingMinutes}m`;
 		}
 
 		return window.remainingText ?? 'Unknown';
@@ -154,11 +154,6 @@
 		if (provider.status === 'ok') return 'Live';
 		if (provider.status === 'partial') return 'Partial';
 		return 'Unavailable';
-	}
-
-	function historyValue(provider: ProviderUsage, windowId: UsageWindowId, bucketIndex: number) {
-		const bucket = history[bucketIndex];
-		return bucket?.providers[provider.provider]?.windows[windowId]?.percent ?? null;
 	}
 
 	function openUsageUrl(url: string) {
@@ -184,13 +179,34 @@
 					</h1>
 				</div>
 
-				<div class="flex flex-wrap items-center gap-2">
-					<div class="rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground">
-						Last update: {formatDateTime(payload?.generatedAt ?? null)}
+				<div
+					class="flex flex-wrap items-center gap-2 rounded-md border bg-background/70 p-1.5 shadow-sm"
+				>
+					<div class="px-3 py-1.5 text-sm text-muted-foreground">
+						<span class="text-muted-foreground/70">Updated</span>
+						<span class="ml-2 text-foreground">{formatDateTime(payload?.generatedAt ?? null)}</span>
 					</div>
 					<button
 						type="button"
-						class="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+						role="switch"
+						aria-checked={autoRefresh}
+						class="inline-flex h-9 items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+						onclick={() => {
+							autoRefresh = !autoRefresh;
+						}}
+					>
+						<span
+							class={`relative inline-flex h-5 w-9 items-center rounded-full transition ${autoRefresh ? 'bg-cyan-500/90' : 'bg-muted-foreground/30'}`}
+						>
+							<span
+								class={`size-4 rounded-full bg-background shadow-sm transition ${autoRefresh ? 'translate-x-4' : 'translate-x-0.5'}`}
+							></span>
+						</span>
+						<span>10m auto</span>
+					</button>
+					<button
+						type="button"
+						class="inline-flex h-9 items-center gap-2 rounded-md bg-foreground px-4 text-sm font-semibold text-background shadow-sm transition hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-60"
 						disabled={refreshing}
 						onclick={() => void refreshUsage()}
 					>
@@ -237,45 +253,84 @@
 						</div>
 
 						<div class="mt-5 grid gap-4">
-							{#each WINDOW_ORDER as windowId (windowId)}
-								{@const usageWindow = provider.windows[windowId]}
-								<div class="rounded-md border bg-background p-4">
-									<div class="flex items-center justify-between gap-3">
-										<div>
-											<div class="text-sm font-medium">{usageWindow.label}</div>
-											<div class="mt-1 text-xs text-muted-foreground">{usageText(usageWindow)}</div>
+							{#if provider.provider !== 'gemini'}
+								{#each WINDOW_ORDER as windowId (windowId)}
+									{@const usageWindow = provider.windows[windowId]}
+									<div class="rounded-md border bg-background p-4">
+										<div class="flex items-center justify-between gap-3">
+											<div>
+												<div class="text-sm font-medium">{usageWindow.label}</div>
+												<div class="mt-1 text-xs text-muted-foreground">
+													{usageText(usageWindow)}
+												</div>
+											</div>
+											<div class="text-right">
+												<div
+													class="text-2xl font-semibold"
+													style={`color: ${heatColor(usageWindow.percent)}`}
+												>
+													{percentLabel(usageWindow.percent)}
+												</div>
+											</div>
 										</div>
-										<div class="text-right">
+
+										<div class="relative mt-4 h-3 overflow-hidden rounded-full bg-muted">
 											<div
-												class="text-2xl font-semibold"
-												style={`color: ${heatColor(usageWindow.percent)}`}
-											>
-												{percentLabel(usageWindow.percent)}
+												class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"
+											></div>
+											<div
+												class="h-full rounded-full transition-all"
+												style={`width: ${barWidth(usageWindow.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(usageWindow.percent)});`}
+											></div>
+										</div>
+
+										<div class="mt-3 flex items-center justify-between gap-3 text-xs">
+											<div class="flex items-center gap-1 text-muted-foreground">
+												<Clock3 class="size-3.5" />
+												<span>Reset</span>
+											</div>
+											<div class="flex items-center gap-1 font-medium">
+												{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
+													<span class={part.tone}>{part.value}{part.unit}</span>
+												{/each}
 											</div>
 										</div>
 									</div>
+								{/each}
+							{/if}
 
-									<div class="relative mt-4 h-3 overflow-hidden rounded-full bg-muted">
-										<div class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"></div>
-										<div
-											class="h-full rounded-full transition-all"
-											style={`width: ${barWidth(usageWindow.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(usageWindow.percent)});`}
-										></div>
-									</div>
-
-									<div class="mt-3 flex items-center justify-between gap-3 text-xs">
-										<div class="flex items-center gap-1 text-muted-foreground">
-											<Clock3 class="size-3.5" />
-											<span>Reset</span>
-										</div>
-										<div class="flex items-center gap-1 font-medium">
-											{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
-												<span class={part.tone}>{part.value}{part.unit}</span>
-											{/each}
-										</div>
+							{#if (provider.modelUsages ?? []).length > 0}
+								<div class="rounded-md border bg-background p-4">
+									<div class="mb-3 text-sm font-medium">Model usage</div>
+									<div class="grid gap-3">
+										{#each provider.modelUsages ?? [] as model (model.label)}
+											<div>
+												<div class="flex items-center justify-between gap-3 text-sm">
+													<span class="font-medium">{model.label}</span>
+													<span style={`color: ${heatColor(model.percent)}`}>
+														{percentLabel(model.percent)}
+													</span>
+												</div>
+												<div class="relative mt-2 h-2 overflow-hidden rounded-full bg-muted">
+													<div
+														class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"
+													></div>
+													<div
+														class="h-full rounded-full transition-all"
+														style={`width: ${barWidth(model.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(model.percent)});`}
+													></div>
+												</div>
+												<div
+													class="mt-1 flex items-center justify-between text-xs text-muted-foreground"
+												>
+													<span>Reset</span>
+													<span>{model.remainingText ?? formatDateTime(model.resetAt)}</span>
+												</div>
+											</div>
+										{/each}
 									</div>
 								</div>
-							{/each}
+							{/if}
 						</div>
 
 						<div class="mt-4 flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -293,70 +348,6 @@
 						</div>
 					</article>
 				{/each}
-			</div>
-
-			<div class="rounded-md border bg-card p-5 shadow-sm">
-				<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-					<div>
-						<div class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-							<Zap class="size-4" />
-							<span>Recent hour</span>
-						</div>
-						<h2 class="mt-1 text-xl font-semibold tracking-normal">10-minute usage trend</h2>
-					</div>
-					<div class="text-sm text-muted-foreground">
-						Next auto refresh: {formatDateTime(payload?.nextRefreshAt ?? null)}
-					</div>
-				</div>
-
-				<div class="mt-5 grid gap-5">
-					{#each providers as provider (provider.provider)}
-						<div class="grid gap-3">
-							<div class="flex items-center justify-between gap-3">
-								<div class="font-medium">{provider.name}</div>
-								<div class="text-xs text-muted-foreground">80% line shown on every column</div>
-							</div>
-
-							<div class="grid gap-4 md:grid-cols-2">
-								{#each WINDOW_ORDER as windowId (windowId)}
-									<div class="rounded-md border bg-background p-4">
-										<div class="mb-3 flex items-center justify-between text-sm">
-											<span class="font-medium">{provider.windows[windowId].label}</span>
-											<span class="text-muted-foreground">{history.length} buckets</span>
-										</div>
-
-										<div class="flex h-40 items-end gap-2 border-b border-l px-2 pb-2">
-											{#each history as bucket, bucketIndex (bucket.bucketStart)}
-												{@const value = historyValue(provider, windowId, bucketIndex)}
-												<div class="group relative flex min-w-9 flex-1 items-end justify-center">
-													<div
-														class="absolute right-0 bottom-[80%] left-0 h-px bg-foreground/50"
-													></div>
-													<div
-														class="w-full rounded-t-sm transition-all"
-														style={`height: ${barWidth(value)}; min-height: ${value === null ? '3px' : '8px'}; background: ${heatColor(value)}; opacity: ${value === null ? 0.35 : 1};`}
-														aria-label={`${provider.name} ${provider.windows[windowId].label} ${percentLabel(value)}`}
-													></div>
-													<div
-														class="pointer-events-none absolute bottom-full mb-2 hidden rounded-md border bg-popover px-2 py-1 text-xs shadow-sm group-hover:block"
-													>
-														{formatBucket(bucket.bucketStart)} · {percentLabel(value)}
-													</div>
-												</div>
-											{/each}
-										</div>
-
-										<div class="mt-2 flex justify-between gap-2 text-xs text-muted-foreground">
-											{#each history as bucket (bucket.bucketStart)}
-												<span>{formatBucket(bucket.bucketStart)}</span>
-											{/each}
-										</div>
-									</div>
-								{/each}
-							</div>
-						</div>
-					{/each}
-				</div>
 			</div>
 		{/if}
 	</section>

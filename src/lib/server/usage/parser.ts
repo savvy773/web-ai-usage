@@ -1,5 +1,6 @@
 import {
 	createEmptyWindow,
+	type ModelUsage,
 	type ProviderId,
 	type ProviderUsage,
 	PROVIDERS,
@@ -31,13 +32,16 @@ export function parseProviderUsage(
 		.map((line) => line.trim())
 		.filter(Boolean);
 
-	const fiveHour = parseWindow(lines, 'fiveHour');
-	const week = parseWindow(lines, 'week');
+	const fiveHour =
+		providerId === 'gemini' ? createEmptyWindow('fiveHour') : parseWindow(lines, 'fiveHour');
+	const week = providerId === 'gemini' ? createEmptyWindow('week') : parseWindow(lines, 'week');
+	const modelUsages = providerId === 'gemini' ? parseGeminiModelUsages(lines) : [];
 	const hasUsage =
 		fiveHour.percent !== null ||
 		week.percent !== null ||
 		fiveHour.used !== null ||
-		week.used !== null;
+		week.used !== null ||
+		modelUsages.length > 0;
 	const hasOutput = output.length > 0;
 	const looksLikeCliProblem =
 		/not recognized|command not found|not found|enoent|login|auth|permission denied/i.test(
@@ -51,7 +55,7 @@ export function parseProviderUsage(
 		slashCommand: provider.slashCommand,
 		usageUrl: provider.usageUrl,
 		status:
-			errorMessage || looksLikeCliProblem
+			errorMessage || (looksLikeCliProblem && !hasUsage)
 				? 'unavailable'
 				: hasUsage
 					? 'ok'
@@ -61,17 +65,28 @@ export function parseProviderUsage(
 		message: buildMessage(hasUsage, hasOutput, errorMessage),
 		collectedAt: new Date().toISOString(),
 		windows: { fiveHour, week },
+		modelUsages,
 		rawPreview: output.slice(-2000) || null
 	};
 }
 
 function parseWindow(lines: string[], windowId: 'fiveHour' | 'week'): UsageWindow {
 	const window = createEmptyWindow(windowId);
-	const candidates = lines.filter((line) =>
-		windowId === 'fiveHour'
-			? /\b(5\s*h|5\s*hour|five\s*hour|session)\b/i.test(line)
-			: /\b(week|weekly|7\s*d|7\s*day)\b/i.test(line)
-	);
+	const limitLine = findCodexLimitLine(lines, windowId);
+	if (limitLine) {
+		applyCodexLimitLine(window, limitLine);
+		return window;
+	}
+
+	const section = findUsageSection(lines, windowId);
+	const candidates =
+		section.length > 0
+			? section
+			: lines.filter((line) =>
+					windowId === 'fiveHour'
+						? /\b(5\s*h|5\s*hour|five\s*hour|session)\b/i.test(line)
+						: /\b(week|weekly|7\s*d|7\s*day)\b/i.test(line)
+				);
 
 	const targetLines = candidates.length > 0 ? candidates : lines;
 	for (const line of targetLines) {
@@ -92,9 +107,85 @@ function parseWindow(lines: string[], windowId: 'fiveHour' | 'week'): UsageWindo
 		if (!window.remainingText && remaining) {
 			window.remainingText = remaining;
 		}
+
+		const resetAt = parseResetAt(line);
+		if (!window.resetAt && resetAt) {
+			window.resetAt = resetAt;
+		}
 	}
 
 	return window;
+}
+
+function findCodexLimitLine(lines: string[], windowId: 'fiveHour' | 'week') {
+	const pattern =
+		windowId === 'fiveHour'
+			? /(?:^|[│\s])5h\s+limit\s*:/i
+			: /(?:^|[│\s])(weekly|week)\s+limit\s*:/i;
+	return lines.find((line) => pattern.test(line)) ?? null;
+}
+
+function applyCodexLimitLine(window: UsageWindow, line: string) {
+	const percent = parsePercent(line);
+	if (percent !== null) {
+		window.percent = /\bleft\b/i.test(line) ? clampPercent(100 - percent) : percent;
+	}
+
+	const resetAt = parseResetAt(line);
+	if (resetAt) {
+		window.resetAt = resetAt;
+	}
+
+	const remaining = parseRemainingText(line);
+	if (remaining) {
+		window.remainingText = remaining;
+	}
+}
+
+function parseGeminiModelUsages(lines: string[]): ModelUsage[] {
+	return lines
+		.map(parseGeminiModelUsageLine)
+		.filter((usage): usage is ModelUsage => usage !== null)
+		.filter((usage) => ['Flash', 'Flash Lite', 'Pro'].includes(usage.label));
+}
+
+function parseGeminiModelUsageLine(line: string): ModelUsage | null {
+	if (!/\bresets\s*:/i.test(line)) return null;
+
+	const match = line.match(/^(.+?)\s+[▬━─█▌▐░▒▓■]+.*?(\d+(?:\.\d+)?)\s*%\s+resets\s*:\s*(.+)$/i);
+	if (!match) return null;
+
+	const label = match[1].replace(/[│╭╮╰╯]/g, '').trim();
+	if (!label || /model usage/i.test(label)) return null;
+
+	const resetText = match[3].trim();
+	return {
+		label,
+		percent: clampPercent(Number(match[2])) ?? 0,
+		resetAt: parseGeminiResetAt(resetText),
+		remainingText: parseGeminiRemainingText(resetText)
+	};
+}
+
+function findUsageSection(lines: string[], windowId: 'fiveHour' | 'week') {
+	const startPattern =
+		windowId === 'fiveHour'
+			? /\b(current\s*session|5\s*h|5\s*hour|five\s*hour)\b/i
+			: /\b(current\s*week|week|weekly|7\s*d|7\s*day)\b/i;
+	const otherPattern =
+		windowId === 'fiveHour'
+			? /\b(current\s*week|week|weekly|7\s*d|7\s*day)\b/i
+			: /\b(current\s*session|5\s*h|5\s*hour|five\s*hour)\b/i;
+	const startIndex = lines.findIndex((line) => startPattern.test(line));
+	if (startIndex < 0) return [];
+
+	const section = [];
+	for (const line of lines.slice(startIndex, startIndex + 8)) {
+		if (section.length > 0 && otherPattern.test(line)) break;
+		section.push(line);
+	}
+
+	return section;
 }
 
 function parsePercent(line: string) {
@@ -126,6 +217,9 @@ function parseCompactNumber(value: string) {
 }
 
 function parseRemainingText(line: string) {
+	const resetMatch = line.match(/\bresets?\s*:?\s*(.+)/i);
+	if (resetMatch) return cleanResetText(resetMatch[1]);
+
 	if (!/\b(reset|resets|renews|remaining|left|until|available)\b/i.test(line)) return null;
 
 	const duration = line.match(
@@ -134,6 +228,125 @@ function parseRemainingText(line: string) {
 	if (duration?.[0]?.trim()) return duration[0].trim();
 
 	return line.replace(/\s+/g, ' ').slice(0, 80);
+}
+
+function parseResetAt(line: string) {
+	const resetMatch = line.match(/\bresets?\s*:?\s*(.+?)(?:\s*\(([^)]+)\)|\))?$/i);
+	if (!resetMatch) return null;
+
+	const rawDate = cleanResetText(resetMatch[1]);
+	const timezone = resetMatch[2]?.trim();
+	if (timezone && timezone !== 'Asia/Seoul') return null;
+
+	const now = new Date();
+	const timeOnly = rawDate.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+	if (timeOnly) {
+		const date = new Date(now);
+		const hour = to24Hour(Number(timeOnly[1]), timeOnly[3]);
+		date.setHours(hour, Number(timeOnly[2] ?? 0), 0, 0);
+		if (date.getTime() <= now.getTime()) {
+			date.setDate(date.getDate() + 1);
+		}
+		return date.toISOString();
+	}
+
+	const timeOnly24 = rawDate.match(/^(\d{1,2}):(\d{2})$/);
+	if (timeOnly24) {
+		const date = new Date(now);
+		date.setHours(Number(timeOnly24[1]), Number(timeOnly24[2]), 0, 0);
+		if (date.getTime() <= now.getTime()) {
+			date.setDate(date.getDate() + 1);
+		}
+		return date.toISOString();
+	}
+
+	const dateMatch = rawDate.match(/^([a-z]+)\s*(\d{1,2}),\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+	if (dateMatch) {
+		const month = monthIndex(dateMatch[1]);
+		if (month === null) return null;
+
+		const hour = to24Hour(Number(dateMatch[3]), dateMatch[5]);
+		const date = new Date(
+			now.getFullYear(),
+			month,
+			Number(dateMatch[2]),
+			hour,
+			Number(dateMatch[4] ?? 0),
+			0,
+			0
+		);
+		if (date.getTime() <= now.getTime()) {
+			date.setFullYear(date.getFullYear() + 1);
+		}
+		return date.toISOString();
+	}
+
+	const codexDateMatch = rawDate.match(/^(\d{1,2}):(\d{2})\s+on\s+(\d{1,2})\s+([a-z]+)$/i);
+	if (codexDateMatch) {
+		const month = monthIndex(codexDateMatch[4]);
+		if (month === null) return null;
+
+		const date = new Date(
+			now.getFullYear(),
+			month,
+			Number(codexDateMatch[3]),
+			Number(codexDateMatch[1]),
+			Number(codexDateMatch[2]),
+			0,
+			0
+		);
+		if (date.getTime() <= now.getTime()) {
+			date.setFullYear(date.getFullYear() + 1);
+		}
+		return date.toISOString();
+	}
+
+	return null;
+}
+
+function parseGeminiResetAt(value: string) {
+	const timeMatch = value.match(/^(\d{1,2}):(\d{2})\s*(am|pm)\b/i);
+	if (!timeMatch) return null;
+
+	const now = new Date();
+	const date = new Date(now);
+	date.setHours(to24Hour(Number(timeMatch[1]), timeMatch[3]), Number(timeMatch[2]), 0, 0);
+	if (date.getTime() <= now.getTime()) {
+		date.setDate(date.getDate() + 1);
+	}
+	return date.toISOString();
+}
+
+function parseGeminiRemainingText(value: string) {
+	const durationMatch = value.match(/\(([^)]+)\)/);
+	return durationMatch?.[1]?.trim() ?? value;
+}
+
+function cleanResetText(value: string) {
+	return value.replace(/[│]/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function to24Hour(hour: number, meridiem: string) {
+	const normalized = hour % 12;
+	return meridiem.toLowerCase() === 'pm' ? normalized + 12 : normalized;
+}
+
+function monthIndex(month: string) {
+	const index = [
+		'jan',
+		'feb',
+		'mar',
+		'apr',
+		'may',
+		'jun',
+		'jul',
+		'aug',
+		'sep',
+		'oct',
+		'nov',
+		'dec'
+	].indexOf(month.slice(0, 3).toLowerCase());
+	return index >= 0 ? index : null;
 }
 
 function clampPercent(value: number) {

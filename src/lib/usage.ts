@@ -1,3 +1,17 @@
+export const CLI_COLLECTION_CONFIG = {
+	workingDirectory: 'D:\\Code\\_temp',
+	shellCommandDelayMs: 500,
+	commandDelayMs: 6000,
+	captureTimeoutMs: 45_000,
+	shell: {
+		command: 'pwsh.exe',
+		args: ['-NoLogo', '-NoProfile']
+	},
+	env: {
+		GEMINI_CLI_TRUST_WORKSPACE: 'true'
+	}
+} as const;
+
 export const PROVIDERS = [
 	{
 		id: 'claude',
@@ -36,6 +50,13 @@ export type UsageWindow = {
 	remainingText: string | null;
 };
 
+export type ModelUsage = {
+	label: string;
+	percent: number;
+	resetAt: string | null;
+	remainingText: string | null;
+};
+
 export type ProviderUsage = {
 	provider: ProviderId;
 	name: string;
@@ -46,6 +67,7 @@ export type ProviderUsage = {
 	message: string;
 	collectedAt: string | null;
 	windows: Record<UsageWindowId, UsageWindow>;
+	modelUsages: ModelUsage[];
 	rawPreview: string | null;
 };
 
@@ -65,7 +87,7 @@ export type UsagePayload = {
 export function createEmptyWindow(id: UsageWindowId): UsageWindow {
 	return {
 		id,
-		label: id === 'fiveHour' ? '5h' : 'Week',
+		label: id === 'fiveHour' ? 'Current' : 'Week',
 		used: null,
 		limit: null,
 		percent: null,
@@ -91,6 +113,7 @@ export function createUnavailableUsage(
 			fiveHour: createEmptyWindow('fiveHour'),
 			week: createEmptyWindow('week')
 		},
+		modelUsages: [],
 		rawPreview: null
 	};
 }
