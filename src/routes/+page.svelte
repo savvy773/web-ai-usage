@@ -5,9 +5,17 @@
 		AlertTriangle,
 		Clock3,
 		ExternalLink,
+		Power,
 		RefreshCcw,
+		ScrollText,
 		Terminal
 	} from '@lucide/svelte';
+
+	interface LogEntry {
+		level: 'log' | 'info' | 'warn' | 'error';
+		message: string;
+		timestamp: string;
+	}
 	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
@@ -43,6 +51,17 @@
 	let autoRefresh = $state(true);
 	let refreshCooldownUntil = $state<number | null>(null);
 	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
+	let stopping = $state(false);
+	let showLogs = $state(true);
+	let logs = $state<LogEntry[]>([]);
+	let logContainer = $state<HTMLElement | null>(null);
+	let autoScrollLogs = $state(true);
+
+	$effect(() => {
+		if (logs.length > 0 && logContainer && autoScrollLogs && showLogs) {
+			logContainer.scrollTop = logContainer.scrollHeight;
+		}
+	});
 
 	const providers = $derived(payload?.providers ?? []);
 	const working = $derived(loading || refreshing);
@@ -77,8 +96,19 @@
 			now = new Date();
 		}, 1000);
 
+		const es = new EventSource('/api/server/logs');
+		es.onmessage = (e) => {
+			const data = JSON.parse(e.data as string);
+			if (data.type === 'init') {
+				logs = data.entries as LogEntry[];
+			} else if (data.type === 'entry') {
+				logs = [...logs, data.entry as LogEntry].slice(-500);
+			}
+		};
+
 		return () => {
 			window.clearInterval(clockTimer);
+			es.close();
 		};
 	});
 
@@ -307,6 +337,27 @@
 		window.open(url, '_blank', 'noopener,noreferrer');
 	}
 
+	async function stopServer() {
+		if (!confirm('Stop server? The browser connection will be lost.')) return;
+		stopping = true;
+		try {
+			await fetch('/api/server/stop', { method: 'POST' });
+		} catch {
+			// Expected: server shutdown drops the connection
+		}
+	}
+
+	function logLevelClass(level: LogEntry['level']) {
+		if (level === 'warn') return 'text-amber-400';
+		if (level === 'error') return 'text-rose-400';
+		if (level === 'info') return 'text-cyan-400';
+		return 'text-foreground/70';
+	}
+
+	function formatLogTime(iso: string) {
+		return new Date(iso).toLocaleTimeString('en', { hour12: false });
+	}
+
 	function formatCountdown(timestamp: number | null) {
 		if (!timestamp) return null;
 		const diff = Math.max(0, timestamp - now.getTime());
@@ -345,23 +396,21 @@
 <main class="min-h-screen bg-background text-foreground">
 	<section class="border-b">
 		<div class="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-6 sm:px-8 lg:px-10">
-			<div class="grid w-full gap-4 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
-				<div class="flex items-center gap-3 justify-self-start">
-					<div class="flex size-11 items-center justify-center rounded-md text-cyan-200">
-						<Activity class="size-5" />
+			<div class="relative flex w-full items-center py-2">
+				<div class="flex items-center gap-3">
+					<div class="flex size-11 items-center justify-center rounded-md text-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.35)] ring-1 ring-cyan-400/20">
+						<Activity class="size-5 drop-shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
 					</div>
 					<div>
-						<h1 class="text-xl font-semibold text-foreground sm:text-2xl">AI Usage</h1>
+						<h1 class="text-xl font-semibold text-foreground drop-shadow-[0_0_8px_rgba(34,211,238,0.15)] sm:text-2xl">AI Usage</h1>
 					</div>
 				</div>
 
-				<div class="flex flex-wrap items-center justify-center gap-4 justify-self-center">
-					<div
-						class="flex min-h-20 min-w-64 flex-col items-center justify-center px-5 py-2 text-center"
-					>
+				<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+					<div class="flex min-h-20 w-64 flex-col items-center justify-center text-center">
 						<div class="text-xs font-medium text-cyan-200/70">{formatClockDate(now)}</div>
 						<div
-							class="w-full text-center font-mono text-4xl leading-none font-semibold text-cyan-100 tabular-nums drop-shadow-sm sm:text-5xl"
+							class="w-full text-center font-mono text-4xl leading-none font-semibold text-cyan-100 tabular-nums drop-shadow-[0_0_20px_rgba(34,211,238,0.4)] sm:text-5xl"
 						>
 							{formatClock(now)}
 						</div>
@@ -374,57 +423,61 @@
 					</div>
 				</div>
 
-				<div class="flex items-center justify-center gap-2 justify-self-end">
-					<div class="flex items-center gap-2">
+				<div class="ml-auto flex shrink-0 items-center">
+					<div class="flex items-stretch overflow-hidden rounded-xl border border-slate-700/60 bg-slate-900/70 shadow-[0_2px_20px_rgba(0,0,0,0.4)] backdrop-blur-sm">
 						<button
 							type="button"
 							role="switch"
 							aria-checked={autoRefresh}
-							class="grid h-10 w-44 shrink-0 cursor-pointer grid-cols-[2.5rem_2.5rem_minmax(4.25rem,1fr)] items-center gap-2 rounded-md border border-cyan-300/15 px-2.5 text-sm font-medium text-cyan-50/80 transition hover:border-cyan-300/30 hover:bg-cyan-500/5 hover:text-cyan-50 active:scale-[0.98]"
-							onclick={() => {
-								autoRefresh = !autoRefresh;
-							}}
+							class={`flex cursor-pointer flex-col items-center justify-center gap-0.5 px-4 py-2.5 transition-colors duration-150 ${autoRefresh ? 'bg-cyan-500/12' : 'hover:bg-white/5'}`}
+							onclick={() => { autoRefresh = !autoRefresh; }}
 						>
-							<span
-								class={`relative h-5 w-10 rounded-full border transition-all duration-200 ease-out ${autoRefresh ? 'border-cyan-300/40 bg-cyan-400/90 shadow-[0_0_16px_rgba(34,211,238,0.22)]' : 'border-muted-foreground/20 bg-muted-foreground/20 shadow-none'}`}
-							>
+							<div class="flex items-center gap-2">
 								<span
-									class={`absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform duration-200 ease-out will-change-transform ${autoRefresh ? 'translate-x-5' : 'translate-x-0'}`}
-								></span>
-							</span>
-							<span class="text-xs font-semibold">Auto</span>
-							<span
-								class="min-w-0 justify-self-end truncate font-mono text-xs text-cyan-300 tabular-nums"
-							>
-								{refreshing && refreshMode === 'auto' ? 'Refreshing' : nextRefreshCountdown}
+									class={`relative h-4 w-7 shrink-0 rounded-full transition-all duration-200 ${autoRefresh ? 'bg-cyan-400/85 shadow-[0_0_10px_rgba(34,211,238,0.35)]' : 'bg-slate-700'}`}
+								>
+									<span
+										class={`absolute top-0.5 left-0.5 size-3 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out will-change-transform ${autoRefresh ? 'translate-x-3' : 'translate-x-0'}`}
+									></span>
+								</span>
+								<span class={`text-xs font-semibold tracking-wide ${autoRefresh ? 'text-cyan-200' : 'text-slate-400'}`}>Auto</span>
+							</div>
+							<span class="font-mono text-[10px] tabular-nums text-cyan-400/65">
+								{refreshing && refreshMode === 'auto' ? '···' : nextRefreshCountdown}
 							</span>
 						</button>
+
+						<div class="my-2 w-px bg-slate-700/70"></div>
+
 						<button
 							type="button"
-							class="inline-flex h-10 w-36 shrink-0 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-md border border-violet-300/20 px-3.5 text-xs font-semibold text-violet-100 transition hover:border-violet-300/40 hover:bg-violet-500/10 hover:text-violet-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+							class="flex cursor-pointer flex-col items-center justify-center gap-0.5 px-4 py-2.5 transition-colors duration-150 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50"
 							disabled={refreshLocked}
 							onclick={() => void refreshUsage('manual')}
 						>
-							{#if working}
-								<span
-									aria-hidden="true"
-									class="size-3.5 rounded-full border-2 border-violet-200/25 border-t-violet-100 motion-safe:animate-spin"
-								></span>
-							{:else}
-								<RefreshCcw class="size-3.5 text-violet-200" />
-							{/if}
-							<span class="min-w-12 text-center whitespace-nowrap">
-								{working ? 'Working' : 'Refresh'}
-							</span>
-							<span
-								class="min-w-12 text-right font-mono text-[11px] text-violet-200/70 tabular-nums"
-							>
-								{#if !working && refreshCooldownCountdown}
-									{refreshCooldownCountdown}
+							<div class="flex items-center gap-2">
+								{#if working}
+									<span aria-hidden="true" class="size-3 rounded-full border-[1.5px] border-violet-400/30 border-t-violet-300 motion-safe:animate-spin"></span>
 								{:else}
-									&nbsp;
+									<RefreshCcw class="size-3 text-violet-400" />
 								{/if}
+								<span class="text-xs font-semibold tracking-wide text-slate-300">{working ? 'Working' : 'Refresh'}</span>
+							</div>
+							<span class="font-mono text-[10px] tabular-nums text-violet-400/65">
+								{refreshCooldownCountdown ?? (working ? '···' : ' ')}
 							</span>
+						</button>
+
+						<div class="my-2 w-px bg-slate-700/70"></div>
+
+						<button
+							type="button"
+							class="flex cursor-pointer items-center justify-center px-4 py-2.5 text-rose-400/70 transition-colors duration-150 hover:bg-rose-500/12 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-40"
+							title="Stop Server"
+							disabled={stopping}
+							onclick={() => void stopServer()}
+						>
+							<Power class="size-4" />
 						</button>
 					</div>
 				</div>
@@ -600,4 +653,63 @@
 			</div>
 		{/if}
 	</section>
+
+	{#if showLogs}
+	<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
+		<div class="overflow-hidden rounded-md border bg-card">
+			<div class="flex items-center justify-between gap-3 border-b px-3 py-2">
+				<div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+					<ScrollText class="size-3.5" />
+					<span>Server Logs</span>
+					<span class="rounded bg-muted px-1.5 py-0.5 font-mono tabular-nums">{logs.length}</span>
+				</div>
+				<div class="flex items-center gap-3">
+					<label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+						<input type="checkbox" bind:checked={autoScrollLogs} class="size-3 accent-cyan-400" />
+						Auto scroll
+					</label>
+					<button
+						type="button"
+						class="text-xs text-muted-foreground hover:text-foreground"
+						onclick={() => { logs = []; }}
+					>
+						Clear
+					</button>
+				</div>
+			</div>
+			<div
+				bind:this={logContainer}
+				class="log-scroll h-72 overflow-y-auto bg-background p-3 font-mono text-[10px] leading-4"
+			>
+				{#if logs.length === 0}
+					<span class="text-muted-foreground/50">No logs yet</span>
+				{:else}
+					{#each logs as entry (entry.timestamp + entry.message)}
+						<div class="flex gap-2 leading-5">
+							<span class="shrink-0 text-muted-foreground/50">{formatLogTime(entry.timestamp)}</span>
+							<span class="shrink-0 w-10 {logLevelClass(entry.level)}">[{entry.level}]</span>
+							<span class="{logLevelClass(entry.level)} break-all">{entry.message}</span>
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</div>
+	</section>
+	{/if}
 </main>
+
+<style>
+	.log-scroll::-webkit-scrollbar {
+		width: 4px;
+	}
+	.log-scroll::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.log-scroll::-webkit-scrollbar-thumb {
+		background: oklch(0.4 0 0 / 0.35);
+		border-radius: 99px;
+	}
+	.log-scroll::-webkit-scrollbar-thumb:hover {
+		background: oklch(0.55 0 0 / 0.6);
+	}
+</style>

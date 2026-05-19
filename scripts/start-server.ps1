@@ -15,6 +15,18 @@ param(
 	[switch]$Help
 )
 
+# 숨김 창으로 자기 재실행 (터미널 독립 실행)
+if (-not $env:AI_USAGE_HIDDEN) {
+	$env:AI_USAGE_HIDDEN = '1'
+	$argList = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode -HostName $HostName -Port $Port"
+	if ($Open) { $argList += ' -Open' }
+	if ($NoRestart) { $argList += ' -NoRestart' }
+	if ($Status) { $argList += ' -Status' }
+	if ($Help) { $argList += ' -Help' }
+	Start-Process pwsh -ArgumentList $argList -WindowStyle Hidden
+	exit
+}
+
 $ErrorActionPreference = 'Stop'
 
 $ServerName = 'ai-usage-dashboard'
