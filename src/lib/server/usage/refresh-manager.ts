@@ -70,7 +70,9 @@ function startRefresh() {
 		})
 		.finally(() => {
 			activeRefresh = null;
-			void readUsagePayload().then(schedulePrefetch).catch(() => undefined);
+			void readUsagePayload()
+				.then(schedulePrefetch)
+				.catch(() => undefined);
 		});
 
 	return activeRefresh;

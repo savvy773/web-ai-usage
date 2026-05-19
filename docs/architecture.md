@@ -8,16 +8,16 @@ AI Usage Dashboard는 로컬에서 실행되는 SvelteKit 기반 대시보드입
 
 ## Main Components
 
-| 영역 | 파일 | 역할 |
-| --- | --- | --- |
-| UI | `src/routes/+page.svelte` | 대시보드 화면, refresh 버튼, 자동 갱신, localStorage 캐시 |
-| API: cached usage | `src/routes/api/usage/+server.ts` | 저장된 usage JSON 반환, prefetch 예약 |
-| API: refresh | `src/routes/api/usage/refresh/+server.ts` | 새 usage 수집 요청 처리 |
-| refresh manager | `src/lib/server/usage/refresh-manager.ts` | 백그라운드 refresh, 중복 refresh 방지, 빠른 캐시 응답 |
-| collector | `src/lib/server/usage/collector.ts` | Claude/Codex/Gemini CLI 실행 |
-| parser | `src/lib/server/usage/parser.ts` | CLI 출력에서 usage percent/reset 정보 파싱 |
-| storage | `src/lib/server/usage/storage.ts` | `usage-history.json` 읽기/쓰기, history 보관 |
-| shared types/config | `src/lib/usage.ts` | provider 정의, payload 타입, CLI 설정 |
+| 영역                | 파일                                      | 역할                                                      |
+| ------------------- | ----------------------------------------- | --------------------------------------------------------- |
+| UI                  | `src/routes/+page.svelte`                 | 대시보드 화면, refresh 버튼, 자동 갱신, localStorage 캐시 |
+| API: cached usage   | `src/routes/api/usage/+server.ts`         | 저장된 usage JSON 반환, prefetch 예약                     |
+| API: refresh        | `src/routes/api/usage/refresh/+server.ts` | 새 usage 수집 요청 처리                                   |
+| refresh manager     | `src/lib/server/usage/refresh-manager.ts` | 백그라운드 refresh, 중복 refresh 방지, 빠른 캐시 응답     |
+| collector           | `src/lib/server/usage/collector.ts`       | Claude/Codex/Gemini CLI 실행                              |
+| parser              | `src/lib/server/usage/parser.ts`          | CLI 출력에서 usage percent/reset 정보 파싱                |
+| storage             | `src/lib/server/usage/storage.ts`         | `usage-history.json` 읽기/쓰기, history 보관              |
+| shared types/config | `src/lib/usage.ts`                        | provider 정의, payload 타입, CLI 설정                     |
 
 ## Data Flow
 
@@ -37,40 +37,40 @@ AI Usage Dashboard는 로컬에서 실행되는 SvelteKit 기반 대시보드입
 
 대상 provider:
 
-| Provider | Command | Slash command |
-| --- | --- | --- |
-| Claude | `claude` | `/usage` |
-| Codex | `codex` | `/status` |
-| Gemini CLI | `gemini` | `/model` |
+| Provider   | Command  | Slash command |
+| ---------- | -------- | ------------- |
+| Claude     | `claude` | `/usage`      |
+| Codex      | `codex`  | `/status`     |
+| Gemini CLI | `gemini` | `/model`      |
 
 전체 수집은 `Promise.all`로 병렬 실행됩니다. 따라서 전체 refresh 시간은 세 provider 시간의 합이 아니라, 가장 오래 걸리는 provider에 의해 결정됩니다.
 
 현재 설정:
 
-| 항목 | 값 |
-| --- | --- |
-| CLI working directory | `D:\Code\_temp` |
-| capture timeout | 45초 |
-| refresh bucket interval | 10분 |
-| prefetch lead time | 30초 전 |
-| quick refresh wait | 2초 |
-| frontend polling interval | 1.5초 |
-| frontend polling attempts | 24회 |
+| 항목                      | 값              |
+| ------------------------- | --------------- |
+| CLI working directory     | `D:\Code\_temp` |
+| capture timeout           | 45초            |
+| refresh bucket interval   | 10분            |
+| prefetch lead time        | 30초 전         |
+| quick refresh wait        | 2초             |
+| frontend polling interval | 1.5초           |
+| frontend polling attempts | 24회            |
 
 실측 기준:
 
-| 동작 | 시간 |
-| --- | --- |
-| `POST /api/usage/refresh` 캐시 응답 | 약 2초 |
-| 백그라운드 전체 수집 완료 | 약 18초 |
+| 동작                                | 시간    |
+| ----------------------------------- | ------- |
+| `POST /api/usage/refresh` 캐시 응답 | 약 2초  |
+| 백그라운드 전체 수집 완료           | 약 18초 |
 
 최근 provider별 실측:
 
-| Provider | 수집 시간 |
-| --- | --- |
-| Gemini CLI | 약 17초 |
-| Codex | 약 12초 |
-| Claude | 약 8초 |
+| Provider   | 수집 시간 |
+| ---------- | --------- |
+| Gemini CLI | 약 17초   |
+| Codex      | 약 12초   |
+| Claude     | 약 8초    |
 
 각 provider별 수집 시간은 `ProviderUsage.collectionDurationMs`에 저장됩니다. 화면의 provider 카드 우측 상단에도 초 단위로 표시됩니다.
 

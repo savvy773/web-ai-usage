@@ -16,6 +16,24 @@
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
+	const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en', {
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		month: 'short',
+		day: 'numeric'
+	});
+	const CLOCK_FORMATTER = new Intl.DateTimeFormat('en', {
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		hour12: false
+	});
+	const CLOCK_DATE_FORMATTER = new Intl.DateTimeFormat('en', {
+		weekday: 'short',
+		month: 'short',
+		day: 'numeric'
+	});
 
 	let payload = $state<UsagePayload | null>(null);
 	let loading = $state(true);
@@ -84,8 +102,7 @@
 			if (cachedPayload) {
 				payload = cachedPayload;
 			}
-			error =
-				requestError instanceof Error ? requestError.message : 'Failed to load usage data.';
+			error = requestError instanceof Error ? requestError.message : 'Failed to load usage data.';
 		} finally {
 			loading = false;
 		}
@@ -170,40 +187,20 @@
 
 	function formatDateTime(value: string | null) {
 		if (!value) return 'Not collected';
-		return new Intl.DateTimeFormat('en', {
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			month: 'short',
-			day: 'numeric'
-		}).format(new Date(value));
+		return DATE_TIME_FORMATTER.format(new Date(value));
 	}
 
 	function formatClock(value: Date) {
-		return new Intl.DateTimeFormat('en', {
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			hour12: false
-		}).format(value);
+		return CLOCK_FORMATTER.format(value);
 	}
 
 	function formatClockDate(value: Date) {
-		return new Intl.DateTimeFormat('en', {
-			weekday: 'short',
-			month: 'short',
-			day: 'numeric'
-		}).format(value);
+		return CLOCK_DATE_FORMATTER.format(value);
 	}
 
 	function formatTimeOnly(value: string | null) {
 		if (!value) return '--:--:--';
-		return new Intl.DateTimeFormat('en', {
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			hour12: false
-		}).format(new Date(value));
+		return CLOCK_FORMATTER.format(new Date(value));
 	}
 
 	function formatDuration(value: number | null) {
@@ -261,10 +258,17 @@
 		}
 
 		const days = Number(match[1] ?? 0);
+		const hours = Number(match[2] ?? 0);
+		const minutes = Number(match[3] ?? 0);
 		const parts = [
 			{ value: match[1] ?? '0', unit: 'd', tone: 'text-violet-400', visible: days > 0 },
-			{ value: match[2] ?? '0', unit: 'h', tone: 'text-cyan-400', visible: true },
-			{ value: match[3] ?? '0', unit: 'm', tone: 'text-amber-300', visible: true }
+			{
+				value: match[2] ?? '0',
+				unit: 'h',
+				tone: 'text-cyan-400',
+				visible: days > 0 || hours > 0 || minutes === 0
+			},
+			{ value: match[3] ?? '0', unit: 'm', tone: 'text-amber-300', visible: minutes > 0 }
 		];
 
 		return parts.filter((part) => part.visible);
@@ -389,7 +393,9 @@
 								></span>
 							</span>
 							<span class="text-xs font-semibold">Auto</span>
-							<span class="min-w-0 justify-self-end truncate font-mono text-xs text-cyan-300 tabular-nums">
+							<span
+								class="min-w-0 justify-self-end truncate font-mono text-xs text-cyan-300 tabular-nums"
+							>
 								{refreshing && refreshMode === 'auto' ? 'Refreshing' : nextRefreshCountdown}
 							</span>
 						</button>
@@ -437,7 +443,9 @@
 
 	<section class="mx-auto grid max-w-7xl gap-5 px-5 py-6 sm:px-8 lg:px-10">
 		{#if loading}
-			<div class="flex items-center gap-2 rounded-md border bg-card p-6 text-sm text-muted-foreground">
+			<div
+				class="flex items-center gap-2 rounded-md border bg-card p-6 text-sm text-muted-foreground"
+			>
 				<span
 					aria-hidden="true"
 					class="size-3.5 rounded-full border-2 border-cyan-300/25 border-t-cyan-200 motion-safe:animate-spin"

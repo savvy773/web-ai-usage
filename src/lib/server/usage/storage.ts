@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
 	createEmptyWindow,
@@ -116,13 +116,18 @@ async function readHistory(): Promise<UsageBucket[]> {
 
 async function writeHistory(history: UsageBucket[]) {
 	await mkdir(DATA_DIR, { recursive: true });
-	const tempPath = `${HISTORY_PATH}.tmp`;
-	await writeFile(
-		tempPath,
-		`${JSON.stringify({ history: history.map(toStoredBucket) }, null, 2)}\n`,
-		'utf8'
-	);
-	await rename(tempPath, HISTORY_PATH);
+	const tempPath = path.join(DATA_DIR, `usage-history.${process.pid}.${Date.now()}.tmp`);
+	try {
+		await writeFile(
+			tempPath,
+			`${JSON.stringify({ history: history.map(toStoredBucket) }, null, 2)}\n`,
+			'utf8'
+		);
+		await rename(tempPath, HISTORY_PATH);
+	} catch (error) {
+		await unlink(tempPath).catch(() => undefined);
+		throw error;
+	}
 }
 
 function inflateBucket(bucket: StoredUsageBucket): UsageBucket {
@@ -215,7 +220,8 @@ function toStoredWindow(window: ProviderUsage['windows']['fiveHour']): StoredUsa
 function buildPayload(history: UsageBucket[]): UsagePayload {
 	const generatedAt = new Date();
 	const latestProviders = PROVIDERS.map((provider) => {
-		for (const bucket of [...history].reverse()) {
+		for (let index = history.length - 1; index >= 0; index -= 1) {
+			const bucket = history[index];
 			const usage = bucket.providers[provider.id];
 			if (usage) return usage;
 		}

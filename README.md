@@ -83,11 +83,11 @@ D:\Code\_temp
 
 provider별 명령:
 
-| Provider | Command | Slash command |
-| --- | --- | --- |
-| Claude | `claude` | `/usage` |
-| Codex | `codex` | `/status` |
-| Gemini CLI | `gemini` | `/model` |
+| Provider   | Command  | Slash command |
+| ---------- | -------- | ------------- |
+| Claude     | `claude` | `/usage`      |
+| Codex      | `codex`  | `/status`     |
+| Gemini CLI | `gemini` | `/model`      |
 
 `node-pty`가 실패하면 일반 child process pipe 방식으로 fallback합니다.
 
@@ -97,11 +97,11 @@ provider별 명령:
 
 최근 실측:
 
-| Provider | 수집 시간 |
-| --- | --- |
-| Gemini CLI | 약 18초 |
-| Codex | 약 12초 |
-| Claude | 약 8초 |
+| Provider   | 수집 시간 |
+| ---------- | --------- |
+| Gemini CLI | 약 18초   |
+| Codex      | 약 12초   |
+| Claude     | 약 8초    |
 
 전체 refresh는 provider들을 병렬로 수집하므로 가장 느린 provider가 전체 시간을 결정합니다.
 
