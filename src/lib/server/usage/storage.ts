@@ -14,7 +14,8 @@ import {
 const DATA_DIR = path.join(process.cwd(), 'data');
 const HISTORY_PATH = path.join(DATA_DIR, 'usage-history.json');
 const BUCKET_MS = 10 * 60 * 1000;
-const MAX_BUCKETS = 5;
+const MAX_BUCKETS = 12;
+const MIN_BUCKETS = 5;
 
 type HistoryFile = {
 	history: StoredUsageBucket[];
@@ -32,6 +33,7 @@ type StoredProviderUsage = {
 	status?: ProviderUsage['status'];
 	message?: string;
 	collectedAt?: string | null;
+	collectionDurationMs?: number | null;
 	windows?: {
 		fiveHour?: StoredUsageWindow;
 		week?: StoredUsageWindow;
@@ -75,7 +77,7 @@ export async function recordUsageSnapshot(providers: ProviderUsage[]): Promise<U
 
 	const trimmed = history
 		.sort((left, right) => Date.parse(left.bucketStart) - Date.parse(right.bucketStart))
-		.slice(-MAX_BUCKETS)
+		.slice(-Math.max(MIN_BUCKETS, MAX_BUCKETS))
 		.map(compactBucket);
 
 	await writeHistory(trimmed);
@@ -153,6 +155,7 @@ function inflateProviderUsage(
 		status: stored?.status ?? fallback.status,
 		message: stored?.message ?? fallback.message,
 		collectedAt: stored?.collectedAt ?? fallback.collectedAt,
+		collectionDurationMs: stored?.collectionDurationMs ?? fallback.collectionDurationMs,
 		windows: {
 			fiveHour: { ...createEmptyWindow('fiveHour'), ...windows.fiveHour },
 			week: { ...createEmptyWindow('week'), ...windows.week }
@@ -185,6 +188,7 @@ function toStoredProviderUsage(provider: ProviderUsage): StoredProviderUsage {
 		status: provider.status,
 		message: provider.message,
 		collectedAt: provider.collectedAt,
+		collectionDurationMs: provider.collectionDurationMs,
 		windows:
 			hasFiveHour || hasWeek
 				? {
@@ -218,9 +222,15 @@ function buildPayload(history: UsageBucket[]): UsagePayload {
 		return createUnavailableUsage(provider);
 	});
 
+	const latestCollectedAt = history
+		.map((bucket) => Date.parse(bucket.collectedAt))
+		.filter(Number.isFinite)
+		.sort((left, right) => right - left)[0];
+	const refreshBaseMs = latestCollectedAt ?? generatedAt.getTime() - BUCKET_MS;
+
 	return {
 		generatedAt: generatedAt.toISOString(),
-		nextRefreshAt: new Date(Math.ceil(generatedAt.getTime() / BUCKET_MS) * BUCKET_MS).toISOString(),
+		nextRefreshAt: new Date(refreshBaseMs + BUCKET_MS).toISOString(),
 		providers: latestProviders,
 		history
 	};

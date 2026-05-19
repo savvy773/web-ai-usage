@@ -1,5 +1,6 @@
 node_modules
 /data/usage-history.json
+/.server
 
 # Output
 .output

@@ -4,6 +4,8 @@ import { CLI_COLLECTION_CONFIG, PROVIDERS, type ProviderId, type ProviderUsage }
 
 type PtyModule = typeof import('node-pty');
 
+const USAGE_OUTPUT_SETTLE_MS = 1200;
+
 export async function collectAllUsage(): Promise<ProviderUsage[]> {
 	const results = await Promise.all(PROVIDERS.map((provider) => collectProvider(provider.id)));
 	return results;
@@ -15,13 +17,22 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		throw new Error(`Unknown provider: ${providerId}`);
 	}
 
+	const startedAt = performance.now();
+
 	try {
 		const output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
-		return parseProviderUsage(provider.id, output);
+		return withCollectionDuration(parseProviderUsage(provider.id, output), startedAt);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown collection error';
-		return parseProviderUsage(provider.id, '', message);
+		return withCollectionDuration(parseProviderUsage(provider.id, '', message), startedAt);
 	}
+}
+
+function withCollectionDuration(provider: ProviderUsage, startedAt: number): ProviderUsage {
+	return {
+		...provider,
+		collectionDurationMs: Math.round(performance.now() - startedAt)
+	};
 }
 
 async function runSlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
@@ -41,6 +52,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 		let wroteCommand = false;
 		let wroteSlashCommand = false;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
+		let usageSettleTimer: NodeJS.Timeout | undefined;
 
 		const terminal = pty.spawn(
 			CLI_COLLECTION_CONFIG.shell.command,
@@ -60,6 +72,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 			if (slashCommandTimer) clearTimeout(slashCommandTimer);
 			clearTimeout(timeoutTimer);
 			if (slashReadyTimer) clearTimeout(slashReadyTimer);
+			if (usageSettleTimer) clearTimeout(usageSettleTimer);
 			try {
 				terminal.kill();
 			} catch {
@@ -127,6 +140,10 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 
 			if (wroteCommand && !wroteSlashCommand && isCliReady(providerId, output)) {
 				slashReadyTimer ??= setTimeout(writeSlashCommand, 350);
+			}
+
+			if (wroteSlashCommand && !usageSettleTimer && hasUsageOutput(providerId, output)) {
+				usageSettleTimer = setTimeout(() => finish(output), USAGE_OUTPUT_SETTLE_MS);
 			}
 		});
 
@@ -225,4 +242,9 @@ async function runPipeSlashCommand(command: string, slashCommand: string) {
 
 		const timeoutTimer = setTimeout(finish, CLI_COLLECTION_CONFIG.captureTimeoutMs);
 	});
+}
+
+function hasUsageOutput(providerId: ProviderId, output: string) {
+	const parsed = parseProviderUsage(providerId, output);
+	return parsed.status === 'ok';
 }

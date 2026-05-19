@@ -64,6 +64,7 @@ export function parseProviderUsage(
 						: 'unavailable',
 		message: buildMessage(hasUsage, hasOutput, errorMessage),
 		collectedAt: new Date().toISOString(),
+		collectionDurationMs: null,
 		windows: { fiveHour, week },
 		modelUsages,
 		rawPreview: output.slice(-2000) || null

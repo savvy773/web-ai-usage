@@ -66,6 +66,7 @@ export type ProviderUsage = {
 	status: UsageStatus;
 	message: string;
 	collectedAt: string | null;
+	collectionDurationMs: number | null;
 	windows: Record<UsageWindowId, UsageWindow>;
 	modelUsages: ModelUsage[];
 	rawPreview: string | null;
@@ -82,6 +83,14 @@ export type UsagePayload = {
 	nextRefreshAt: string;
 	providers: ProviderUsage[];
 	history: UsageBucket[];
+	refreshState?: UsageRefreshState;
+};
+
+export type UsageRefreshState = {
+	refreshing: boolean;
+	startedAt: string | null;
+	finishedAt: string | null;
+	error: string | null;
 };
 
 export function createEmptyWindow(id: UsageWindowId): UsageWindow {
@@ -109,6 +118,7 @@ export function createUnavailableUsage(
 		status: 'unavailable',
 		message,
 		collectedAt: null,
+		collectionDurationMs: null,
 		windows: {
 			fiveHour: createEmptyWindow('fiveHour'),
 			week: createEmptyWindow('week')

@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
-import { readUsagePayload } from '$lib/server/usage/storage';
+import { readManagedUsagePayload } from '$lib/server/usage/refresh-manager';
 
 export async function GET() {
-	return json(await readUsagePayload());
+	return json(await readManagedUsagePayload());
 }

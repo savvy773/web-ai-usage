@@ -1,16 +1,7 @@
 import { json } from '@sveltejs/kit';
-import { collectAllUsage } from '$lib/server/usage/collector';
-import { recordUsageSnapshot } from '$lib/server/usage/storage';
-
-let activeRefresh: Promise<Response> | null = null;
+import { refreshUsagePayload } from '$lib/server/usage/refresh-manager';
 
 export async function POST() {
-	activeRefresh ??= collectAllUsage()
-		.then((providers) => recordUsageSnapshot(providers))
-		.then((payload) => json(payload))
-		.finally(() => {
-			activeRefresh = null;
-		});
-
-	return activeRefresh;
+	const { payload, pending } = await refreshUsagePayload();
+	return json(payload, { status: pending ? 202 : 200 });
 }

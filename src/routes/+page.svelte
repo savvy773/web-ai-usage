@@ -12,6 +12,9 @@
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
 	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
+	const USAGE_CACHE_KEY = 'ai-usage-payload-cache';
+	const REFRESH_POLL_INTERVAL_MS = 1500;
+	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 
 	let payload = $state<UsagePayload | null>(null);
@@ -24,9 +27,10 @@
 	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
 
 	const providers = $derived(payload?.providers ?? []);
+	const working = $derived(loading || refreshing);
 	const nextRefreshCountdown = $derived(formatRefreshCountdown(payload?.nextRefreshAt ?? null));
 	const refreshCooldownCountdown = $derived(formatCountdown(refreshCooldownUntil));
-	const refreshLocked = $derived(refreshing || isRefreshCoolingDown(refreshCooldownUntil));
+	const refreshLocked = $derived(working || isRefreshCoolingDown(refreshCooldownUntil));
 	let initialRefreshStarted = false;
 
 	$effect(() => {
@@ -45,6 +49,11 @@
 
 	onMount(() => {
 		restoreRefreshCooldown();
+		const cachedPayload = readCachedPayload();
+		if (cachedPayload) {
+			payload = cachedPayload;
+			loading = false;
+		}
 		void loadUsage({ refreshAfterLoad: true });
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
@@ -62,7 +71,7 @@
 		try {
 			const response = await fetch('/api/usage');
 			if (!response.ok) throw new Error(`Usage request failed: ${response.status}`);
-			payload = (await response.json()) as UsagePayload;
+			applyPayload((await response.json()) as UsagePayload);
 			if (options.refreshAfterLoad && !initialRefreshStarted) {
 				if (isRefreshCoolingDown(refreshCooldownUntil)) {
 					return;
@@ -71,7 +80,12 @@
 				window.setTimeout(() => void refreshUsage('auto'), 250);
 			}
 		} catch (requestError) {
-			error = requestError instanceof Error ? requestError.message : 'Failed to load usage data.';
+			const cachedPayload = readCachedPayload();
+			if (cachedPayload) {
+				payload = cachedPayload;
+			}
+			error =
+				requestError instanceof Error ? requestError.message : 'Failed to load usage data.';
 		} finally {
 			loading = false;
 		}
@@ -86,11 +100,17 @@
 		refreshing = true;
 		error = null;
 		setRefreshCooldown(Date.now() + MANUAL_REFRESH_COOLDOWN_MS);
+		const previousCollectedAt = latestCollectedAt(payload);
 
 		try {
 			const response = await fetch('/api/usage/refresh', { method: 'POST' });
 			if (!response.ok) throw new Error(`Refresh failed: ${response.status}`);
-			payload = (await response.json()) as UsagePayload;
+			const refreshedPayload = (await response.json()) as UsagePayload;
+			applyPayload(refreshedPayload);
+
+			if (response.status === 202 || refreshedPayload.refreshState?.refreshing) {
+				await pollUsageUntilSettled(previousCollectedAt);
+			}
 		} catch (requestError) {
 			error =
 				requestError instanceof Error ? requestError.message : 'Failed to refresh usage data.';
@@ -99,6 +119,53 @@
 			loading = false;
 			refreshMode = 'idle';
 		}
+	}
+
+	async function pollUsageUntilSettled(previousCollectedAt: string | null) {
+		for (let attempt = 0; attempt < REFRESH_POLL_ATTEMPTS; attempt += 1) {
+			await delay(REFRESH_POLL_INTERVAL_MS);
+
+			const response = await fetch('/api/usage');
+			if (!response.ok) continue;
+
+			const polledPayload = (await response.json()) as UsagePayload;
+			applyPayload(polledPayload);
+
+			const collectedAt = latestCollectedAt(polledPayload);
+			if (!polledPayload.refreshState?.refreshing && collectedAt !== previousCollectedAt) {
+				return;
+			}
+		}
+	}
+
+	function applyPayload(nextPayload: UsagePayload) {
+		payload = nextPayload;
+		try {
+			localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(nextPayload));
+		} catch {
+			// Local storage can be unavailable in private or restricted contexts.
+		}
+	}
+
+	function readCachedPayload() {
+		try {
+			const cached = localStorage.getItem(USAGE_CACHE_KEY);
+			if (!cached) return null;
+			return JSON.parse(cached) as UsagePayload;
+		} catch {
+			localStorage.removeItem(USAGE_CACHE_KEY);
+			return null;
+		}
+	}
+
+	function latestCollectedAt(nextPayload: UsagePayload | null) {
+		return nextPayload?.history.at(-1)?.collectedAt ?? null;
+	}
+
+	function delay(ms: number) {
+		return new Promise<void>((resolve) => {
+			window.setTimeout(resolve, ms);
+		});
 	}
 
 	function formatDateTime(value: string | null) {
@@ -137,6 +204,11 @@
 			second: '2-digit',
 			hour12: false
 		}).format(new Date(value));
+	}
+
+	function formatDuration(value: number | null) {
+		if (value === null) return null;
+		return `${(value / 1000).toFixed(1)}s`;
 	}
 
 	function formatRefreshCountdown(value: string | null) {
@@ -304,20 +376,20 @@
 							type="button"
 							role="switch"
 							aria-checked={autoRefresh}
-							class="inline-flex h-10 w-40 shrink-0 cursor-pointer items-center gap-2 overflow-hidden rounded-md border border-cyan-300/15 px-3 text-sm font-medium text-cyan-50/80 transition hover:border-cyan-300/30 hover:text-cyan-50 active:scale-[0.98]"
+							class="grid h-10 w-44 shrink-0 cursor-pointer grid-cols-[2.5rem_2.5rem_minmax(4.25rem,1fr)] items-center gap-2 rounded-md border border-cyan-300/15 px-2.5 text-sm font-medium text-cyan-50/80 transition hover:border-cyan-300/30 hover:bg-cyan-500/5 hover:text-cyan-50 active:scale-[0.98]"
 							onclick={() => {
 								autoRefresh = !autoRefresh;
 							}}
 						>
 							<span
-								class={`relative inline-flex h-5 w-9 items-center rounded-full transition ${autoRefresh ? 'bg-cyan-500/90' : 'bg-muted-foreground/30'}`}
+								class={`relative h-5 w-10 rounded-full border transition-all duration-200 ease-out ${autoRefresh ? 'border-cyan-300/40 bg-cyan-400/90 shadow-[0_0_16px_rgba(34,211,238,0.22)]' : 'border-muted-foreground/20 bg-muted-foreground/20 shadow-none'}`}
 							>
 								<span
-									class={`size-4 rounded-full bg-background shadow-sm transition ${autoRefresh ? 'translate-x-4' : 'translate-x-0.5'}`}
+									class={`absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform duration-200 ease-out will-change-transform ${autoRefresh ? 'translate-x-5' : 'translate-x-0'}`}
 								></span>
 							</span>
-							<span class="w-8 text-xs">Auto</span>
-							<span class="w-16 font-mono text-xs text-cyan-300 tabular-nums">
+							<span class="text-xs font-semibold">Auto</span>
+							<span class="min-w-0 justify-self-end truncate font-mono text-xs text-cyan-300 tabular-nums">
 								{refreshing && refreshMode === 'auto' ? 'Refreshing' : nextRefreshCountdown}
 							</span>
 						</button>
@@ -327,16 +399,21 @@
 							disabled={refreshLocked}
 							onclick={() => void refreshUsage('manual')}
 						>
-							<RefreshCcw
-								class={`size-3.5 text-violet-200 ${refreshing ? 'animate-spin motion-safe:animate-spin' : ''}`}
-							/>
+							{#if working}
+								<span
+									aria-hidden="true"
+									class="size-3.5 rounded-full border-2 border-violet-200/25 border-t-violet-100 motion-safe:animate-spin"
+								></span>
+							{:else}
+								<RefreshCcw class="size-3.5 text-violet-200" />
+							{/if}
 							<span class="min-w-12 text-center whitespace-nowrap">
-								{refreshing ? 'Working' : 'Refresh'}
+								{working ? 'Working' : 'Refresh'}
 							</span>
 							<span
 								class="min-w-12 text-right font-mono text-[11px] text-violet-200/70 tabular-nums"
 							>
-								{#if !refreshing && refreshCooldownCountdown}
+								{#if !working && refreshCooldownCountdown}
 									{refreshCooldownCountdown}
 								{:else}
 									&nbsp;
@@ -360,27 +437,37 @@
 
 	<section class="mx-auto grid max-w-7xl gap-5 px-5 py-6 sm:px-8 lg:px-10">
 		{#if loading}
-			<div class="rounded-md border bg-card p-6 text-sm text-muted-foreground">
+			<div class="flex items-center gap-2 rounded-md border bg-card p-6 text-sm text-muted-foreground">
+				<span
+					aria-hidden="true"
+					class="size-3.5 rounded-full border-2 border-cyan-300/25 border-t-cyan-200 motion-safe:animate-spin"
+				></span>
 				Loading usage data...
 			</div>
 		{:else}
 			<div class="grid gap-4 lg:grid-cols-3">
 				{#each providers as provider (provider.provider)}
 					<article class="flex h-full flex-col rounded-md border bg-card p-5 shadow-sm">
-						<div class="flex items-start justify-between gap-3">
-							<div>
-								<div class="flex items-center gap-2 text-sm text-muted-foreground">
+						<div class="flex items-center justify-between gap-3">
+							<div class="flex min-w-0 items-center gap-3">
+								<h2 class="flex min-w-0 items-center gap-2 text-2xl font-semibold tracking-normal">
 									<Terminal class="size-4" />
-									<span>{provider.command} {provider.slashCommand}</span>
-								</div>
-								<h2 class="mt-2 text-2xl font-semibold tracking-normal">{provider.name}</h2>
+									<span class="truncate">{provider.name}</span>
+								</h2>
 							</div>
 
-							<span
-								class={`rounded-md border px-2 py-1 text-xs font-medium ${statusTone(provider)}`}
-							>
-								{statusLabel(provider)}
-							</span>
+							<div class="flex shrink-0 items-center gap-1.5">
+								<span
+									class={`rounded-md border px-2 py-1 text-xs font-medium ${statusTone(provider)}`}
+								>
+									{statusLabel(provider)}
+								</span>
+								<span
+									class="rounded-md border border-cyan-300/15 bg-cyan-500/10 px-2 py-1 font-mono text-xs text-cyan-200 tabular-nums"
+								>
+									{formatDuration(provider.collectionDurationMs) ?? '--'}
+								</span>
+							</div>
 						</div>
 
 						<div class="mt-5 grid gap-3">
@@ -425,7 +512,7 @@
 												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
 											</div>
 											<div
-												class="flex items-center gap-1 font-mono text-[12px] font-semibold text-foreground/85"
+												class="flex items-center gap-1 font-mono text-sm font-semibold text-foreground/90"
 											>
 												{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
 													<span class={part.tone}>{part.value}{part.unit}</span>
@@ -473,7 +560,7 @@
 												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
 											</div>
 											<div
-												class="flex items-center gap-1 font-mono text-[12px] font-semibold text-foreground/85"
+												class="flex items-center gap-1 font-mono text-sm font-semibold text-foreground/90"
 											>
 												{#each resetPartsFromText(model.remainingText ?? formatDateTime(model.resetAt)) as part (`${model.label}-${part.unit || part.value}`)}
 													<span class={part.tone}>{part.value}{part.unit}</span>
