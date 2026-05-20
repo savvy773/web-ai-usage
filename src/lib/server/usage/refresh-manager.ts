@@ -48,23 +48,19 @@ function startRefresh() {
 		error: null
 	};
 
-	console.info('[refresh] Starting...');
-
 	activeRefresh = collectAllUsage()
 		.then((providers) => {
 			const statuses = providers.map((p) => `${p.provider}:${p.status}`).join(' ');
-			console.info(`[refresh] Collected — ${statuses}`);
-			return recordUsageSnapshot(providers);
-		})
-		.then((payload) => {
-			refreshState = {
-				refreshing: false,
-				startedAt: refreshState.startedAt,
-				finishedAt: new Date().toISOString(),
-				error: null
-			};
-			console.info('[refresh] Done.');
-			return payload;
+			return recordUsageSnapshot(providers).then((payload) => {
+				refreshState = {
+					refreshing: false,
+					startedAt: refreshState.startedAt,
+					finishedAt: new Date().toISOString(),
+					error: null
+				};
+				console.info(`[refresh] ${statuses}`);
+				return payload;
+			});
 		})
 		.catch(async (error) => {
 			const msg = error instanceof Error ? error.message : 'Failed to refresh usage data.';
