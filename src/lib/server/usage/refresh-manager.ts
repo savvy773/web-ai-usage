@@ -7,6 +7,7 @@ const QUICK_REFRESH_WAIT_MS = 2_000;
 
 let activeRefresh: Promise<UsagePayload> | null = null;
 let scheduledPrefetch: NodeJS.Timeout | null = null;
+let lastStatuses: string | null = null;
 let refreshState: UsageRefreshState = {
 	refreshing: false,
 	startedAt: null,
@@ -58,7 +59,15 @@ function startRefresh() {
 					finishedAt: new Date().toISOString(),
 					error: null
 				};
-				console.info(`[refresh] ${statuses}`);
+				if (statuses !== lastStatuses) {
+					const hasError = providers.some((p) => p.status !== 'ok');
+					if (hasError) {
+						console.warn(`[refresh] ${statuses}`);
+					} else if (lastStatuses !== null) {
+						console.info(`[refresh] recovered: ${statuses}`);
+					}
+					lastStatuses = statuses;
+				}
 				return payload;
 			});
 		})
