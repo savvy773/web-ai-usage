@@ -24,6 +24,7 @@
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
+	const DAY_MS = 24 * 60 * 60 * 1000;
 	const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en', {
 		hour: '2-digit',
 		minute: '2-digit',
@@ -321,6 +322,117 @@
 		return window.remainingText ?? 'Unknown';
 	}
 
+	function weeklyPace(window: UsageWindow) {
+		if (window.id !== 'week' || window.percent === null || !window.resetAt) return null;
+
+		const remainingMs = Date.parse(window.resetAt) - now.getTime();
+		if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+
+		const target = weeklyTargetPercent(remainingMs);
+		const diff = window.percent - target;
+
+		if (diff >= 22) {
+			return {
+				label: 'Ease up',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-rose-300',
+				surface: 'border-rose-400/30 bg-rose-500/10',
+				dot: 'bg-rose-300 shadow-[0_0_10px_rgba(253,164,175,0.45)]',
+				bar: '#fb7185',
+				used: window.percent,
+				target
+			};
+		}
+
+		if (diff >= 10) {
+			return {
+				label: 'Ahead',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-orange-300',
+				surface: 'border-orange-400/30 bg-orange-500/10',
+				dot: 'bg-orange-300 shadow-[0_0_10px_rgba(253,186,116,0.45)]',
+				bar: '#fb923c',
+				used: window.percent,
+				target
+			};
+		}
+
+		if (diff >= 4) {
+			return {
+				label: 'Slightly ahead',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-amber-300',
+				surface: 'border-amber-400/30 bg-amber-500/10',
+				dot: 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.4)]',
+				bar: '#fbbf24',
+				used: window.percent,
+				target
+			};
+		}
+
+		if (diff <= -25) {
+			return {
+				label: 'Plenty left',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-cyan-300',
+				surface: 'border-cyan-400/25 bg-cyan-500/10',
+				dot: 'bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.4)]',
+				bar: '#22d3ee',
+				used: window.percent,
+				target
+			};
+		}
+
+		if (diff <= -10) {
+			return {
+				label: 'Room to use',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-sky-300',
+				surface: 'border-sky-400/25 bg-sky-500/10',
+				dot: 'bg-sky-300 shadow-[0_0_10px_rgba(125,211,252,0.4)]',
+				bar: '#38bdf8',
+				used: window.percent,
+				target
+			};
+		}
+
+		if (diff <= -4) {
+			return {
+				label: 'Slightly under',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-teal-300',
+				surface: 'border-teal-400/25 bg-teal-500/10',
+				dot: 'bg-teal-300 shadow-[0_0_10px_rgba(94,234,212,0.4)]',
+				bar: '#2dd4bf',
+				used: window.percent,
+				target
+			};
+		}
+
+		return {
+			label: 'On pace',
+			detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+			tone: 'text-emerald-300',
+			surface: 'border-emerald-400/30 bg-emerald-500/10',
+			dot: 'bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.45)]',
+			bar: '#34d399',
+			used: window.percent,
+			target
+		};
+	}
+
+	function weeklyTargetPercent(remainingMs: number) {
+		const remainingDays = remainingMs / DAY_MS;
+		if (remainingDays > 6) return 10;
+		if (remainingDays > 5) return 20;
+		if (remainingDays > 4) return 35;
+		if (remainingDays > 3) return 50;
+		if (remainingDays > 2) return 65;
+		if (remainingDays > 1) return 80;
+		if (remainingDays > 0.5) return 90;
+		return 95;
+	}
+
 	function statusTone(provider: ProviderUsage) {
 		if (provider.status === 'ok') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
 		if (provider.status === 'partial') return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
@@ -536,7 +648,7 @@
 								{#each WINDOW_ORDER as windowId (windowId)}
 									{@const usageWindow = provider.windows[windowId]}
 									<div
-										class="flex min-h-32 flex-col justify-between rounded-md border bg-background p-4"
+										class="flex h-32 flex-col justify-between rounded-md border bg-background p-4"
 									>
 										<div class="flex items-center justify-between gap-3">
 											<div>
@@ -572,28 +684,29 @@
 												<Clock3 class="size-3" />
 												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
 											</div>
-											<div
-												class="flex items-center gap-1 font-mono text-sm font-semibold text-foreground/90"
-											>
-												{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
-													<span class={part.tone}>{part.value}{part.unit}</span>
-												{/each}
+											<div class="text-right">
+												<div
+													class="flex items-center justify-end gap-1 font-mono text-sm font-semibold text-foreground/90"
+												>
+													{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
+														<span class={part.tone}>{part.value}{part.unit}</span>
+													{/each}
+												</div>
 											</div>
 										</div>
+
 									</div>
 								{/each}
-								<div aria-hidden="true" class="min-h-32"></div>
 							{/if}
 
 							{#if (provider.modelUsages ?? []).length > 0}
 								{#each provider.modelUsages ?? [] as model (model.label)}
 									<div
-										class="flex min-h-32 flex-col justify-between rounded-md border bg-background p-4"
+										class="flex h-32 flex-col justify-between rounded-md border bg-background p-4"
 									>
 										<div class="flex items-center justify-between gap-3">
 											<div>
 												<div class="text-sm font-medium">{model.label}</div>
-												<div class="mt-1 text-xs text-muted-foreground">Model usage</div>
 											</div>
 											<div class="text-right">
 												<div
@@ -633,6 +746,38 @@
 							{/if}
 						</div>
 
+						{#if provider.provider !== 'gemini'}
+							{@const pace = weeklyPace(provider.windows.week)}
+							{#if pace}
+								<div
+									class={`mt-3 rounded-md border px-3 py-2 text-xs ${pace.surface}`}
+								>
+									<div class="flex items-center justify-between gap-3">
+										<div class="flex items-center gap-2">
+											<span class={`size-2 rounded-full ${pace.dot}`}></span>
+											<span class="font-medium tracking-[0.14em] text-foreground/60 uppercase"
+												>Pace</span
+											>
+										</div>
+										<div class="text-right">
+											<span class={`font-semibold ${pace.tone}`}>{pace.label}</span>
+											<span class="ml-2 font-mono text-muted-foreground">{pace.detail}</span>
+										</div>
+									</div>
+									<div class="relative mt-2 h-1.5 overflow-hidden rounded-full bg-background/70">
+										<div
+											class="h-full rounded-full transition-all"
+											style={`width: ${barWidth(pace.used)}; background: ${pace.bar};`}
+										></div>
+										<div
+											class="absolute top-0 h-full w-px bg-foreground/80"
+											style={`left: ${barWidth(pace.target)};`}
+										></div>
+									</div>
+								</div>
+							{/if}
+						{/if}
+
 						<div
 							class="mt-auto flex items-center justify-between gap-3 pt-4 text-xs text-muted-foreground"
 						>
@@ -655,46 +800,50 @@
 	</section>
 
 	{#if showLogs}
-	<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
-		<div class="overflow-hidden rounded-md border bg-card">
-			<div class="flex items-center justify-between gap-3 border-b px-3 py-2">
-				<div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-					<ScrollText class="size-3.5" />
-					<span>Server Logs</span>
-					<span class="rounded bg-muted px-1.5 py-0.5 font-mono tabular-nums">{logs.length}</span>
+		<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
+			<div class="overflow-hidden rounded-md border bg-card">
+				<div class="flex items-center justify-between gap-3 border-b px-3 py-2">
+					<div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+						<ScrollText class="size-3.5" />
+						<span>Server Logs</span>
+						<span class="rounded bg-muted px-1.5 py-0.5 font-mono tabular-nums">{logs.length}</span>
+					</div>
+					<div class="flex items-center gap-3">
+						<label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+							<input type="checkbox" bind:checked={autoScrollLogs} class="size-3 accent-cyan-400" />
+							Auto scroll
+						</label>
+						<button
+							type="button"
+							class="text-xs text-muted-foreground hover:text-foreground"
+							onclick={() => {
+								logs = [];
+							}}
+						>
+							Clear
+						</button>
+					</div>
 				</div>
-				<div class="flex items-center gap-3">
-					<label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-						<input type="checkbox" bind:checked={autoScrollLogs} class="size-3 accent-cyan-400" />
-						Auto scroll
-					</label>
-					<button
-						type="button"
-						class="text-xs text-muted-foreground hover:text-foreground"
-						onclick={() => { logs = []; }}
-					>
-						Clear
-					</button>
+				<div
+					bind:this={logContainer}
+					class="log-scroll h-72 overflow-y-auto bg-background p-3 font-mono text-[10px] leading-4"
+				>
+					{#if logs.length === 0}
+						<span class="text-muted-foreground/50">No logs yet</span>
+					{:else}
+						{#each logs as entry (entry.timestamp + entry.message)}
+							<div class="flex gap-2 leading-5">
+								<span class="shrink-0 text-muted-foreground/50"
+									>{formatLogTime(entry.timestamp)}</span
+								>
+								<span class="w-10 shrink-0 {logLevelClass(entry.level)}">[{entry.level}]</span>
+								<span class="{logLevelClass(entry.level)} break-all">{entry.message}</span>
+							</div>
+						{/each}
+					{/if}
 				</div>
 			</div>
-			<div
-				bind:this={logContainer}
-				class="log-scroll h-72 overflow-y-auto bg-background p-3 font-mono text-[10px] leading-4"
-			>
-				{#if logs.length === 0}
-					<span class="text-muted-foreground/50">No logs yet</span>
-				{:else}
-					{#each logs as entry (entry.timestamp + entry.message)}
-						<div class="flex gap-2 leading-5">
-							<span class="shrink-0 text-muted-foreground/50">{formatLogTime(entry.timestamp)}</span>
-							<span class="shrink-0 w-10 {logLevelClass(entry.level)}">[{entry.level}]</span>
-							<span class="{logLevelClass(entry.level)} break-all">{entry.message}</span>
-						</div>
-					{/each}
-				{/if}
-			</div>
-		</div>
-	</section>
+		</section>
 	{/if}
 </main>
 

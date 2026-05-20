@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { parseProviderUsage } from './parser';
+import { parseProviderUsage, stripTerminalOutput } from './parser';
 import { CLI_COLLECTION_CONFIG, PROVIDERS, type ProviderId, type ProviderUsage } from '$lib/usage';
 
 type PtyModule = typeof import('node-pty');
@@ -250,8 +250,23 @@ async function runPipeSlashCommand(command: string, slashCommand: string) {
 }
 
 function hasUsageOutput(providerId: ProviderId, output: string) {
+	if (providerId === 'codex') {
+		return hasCodexLimitLines(output);
+	}
+
 	const parsed = parseProviderUsage(providerId, output);
 	return parsed.status === 'ok';
+}
+
+function hasCodexLimitLines(output: string) {
+	const lines = stripTerminalOutput(output)
+		.split('\n')
+		.map((line) => line.trim());
+
+	return (
+		lines.some((line) => /(?:^|[│\s])5h\s+limit\s*:/i.test(line)) &&
+		lines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line))
+	);
 }
 
 function appendCapturedOutput(output: string, chunk: string) {
