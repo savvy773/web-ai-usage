@@ -750,7 +750,7 @@
 							{@const pace = weeklyPace(provider.windows.week)}
 							{#if pace}
 								<div
-									class={`mt-3 rounded-md border px-3 py-2 text-xs ${pace.surface}`}
+									class={`mt-3 rounded-md border px-3 py-3 text-xs ${pace.surface}`}
 								>
 									<div class="flex items-center justify-between gap-3">
 										<div class="flex items-center gap-2">
@@ -764,7 +764,7 @@
 											<span class="ml-2 font-mono text-muted-foreground">{pace.detail}</span>
 										</div>
 									</div>
-									<div class="relative mt-2 h-1.5 overflow-hidden rounded-full bg-background/70">
+									<div class="relative mt-3 h-3 overflow-hidden rounded-full bg-background/70">
 										<div
 											class="h-full rounded-full transition-all"
 											style={`width: ${barWidth(pace.used)}; background: ${pace.bar};`}

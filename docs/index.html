@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ko">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>AI Usage Dashboard Docs</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				--bg: #0f172a;
+				--panel: #111827;
+				--panel-soft: #172033;
+				--border: #2f3a4f;
+				--text: #e5edf7;
+				--muted: #9aa7b8;
+				--cyan: #67e8f9;
+				--violet: #c4b5fd;
+				--green: #86efac;
+				--amber: #fcd34d;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--text);
+				font-family:
+					Inter,
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				line-height: 1.65;
+			}
+
+			main {
+				width: min(1080px, calc(100% - 32px));
+				margin: 0 auto;
+				padding: 48px 0 64px;
+			}
+
+			header {
+				padding-bottom: 28px;
+				border-bottom: 1px solid var(--border);
+			}
+
+			h1,
+			h2,
+			h3,
+			p {
+				margin-top: 0;
+			}
+
+			h1 {
+				margin-bottom: 12px;
+				font-size: clamp(2rem, 5vw, 4rem);
+				line-height: 1.05;
+				letter-spacing: 0;
+			}
+
+			h2 {
+				margin: 0 0 16px;
+				font-size: 1.35rem;
+			}
+
+			h3 {
+				margin: 0 0 8px;
+				font-size: 1rem;
+			}
+
+			p {
+				color: var(--muted);
+			}
+
+			code {
+				padding: 2px 6px;
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				background: #0b1120;
+				color: var(--cyan);
+				font-size: 0.9em;
+			}
+
+			.hero-copy {
+				max-width: 760px;
+				margin-bottom: 0;
+				font-size: 1.05rem;
+			}
+
+			.grid {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: 14px;
+				margin-top: 24px;
+			}
+
+			.card {
+				border: 1px solid var(--border);
+				border-radius: 8px;
+				background: var(--panel);
+				padding: 18px;
+			}
+
+			.card p,
+			.card ul {
+				margin-bottom: 0;
+			}
+
+			section {
+				margin-top: 36px;
+			}
+
+			ul {
+				padding-left: 20px;
+				color: var(--muted);
+			}
+
+			li + li {
+				margin-top: 6px;
+			}
+
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				overflow: hidden;
+				border: 1px solid var(--border);
+				border-radius: 8px;
+				background: var(--panel);
+			}
+
+			th,
+			td {
+				padding: 12px 14px;
+				border-bottom: 1px solid var(--border);
+				text-align: left;
+				vertical-align: top;
+			}
+
+			th {
+				background: var(--panel-soft);
+				color: var(--text);
+				font-size: 0.9rem;
+			}
+
+			td {
+				color: var(--muted);
+			}
+
+			tr:last-child td {
+				border-bottom: 0;
+			}
+
+			.pill-row {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+				margin-top: 18px;
+			}
+
+			.pill {
+				border: 1px solid var(--border);
+				border-radius: 999px;
+				padding: 6px 10px;
+				background: #0b1120;
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+
+			.flow {
+				display: grid;
+				grid-template-columns: repeat(4, minmax(0, 1fr));
+				gap: 12px;
+			}
+
+			.step {
+				border: 1px solid var(--border);
+				border-radius: 8px;
+				padding: 14px;
+				background: var(--panel);
+			}
+
+			.step strong {
+				display: block;
+				margin-bottom: 4px;
+				color: var(--green);
+			}
+
+			.note {
+				border-left: 3px solid var(--amber);
+				background: rgba(252, 211, 77, 0.08);
+				padding: 14px 16px;
+				color: var(--muted);
+			}
+
+			a {
+				color: var(--cyan);
+			}
+
+			@media (max-width: 800px) {
+				main {
+					width: min(100% - 24px, 1080px);
+					padding-top: 28px;
+				}
+
+				.grid,
+				.flow {
+					grid-template-columns: 1fr;
+				}
+
+				table {
+					display: block;
+					overflow-x: auto;
+					white-space: nowrap;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<header>
+				<h1>AI Usage Dashboard</h1>
+				<p class="hero-copy">
+					Claude, Codex, Gemini CLI 사용량을 로컬에서 수집하고 한 화면에서 확인하는 SvelteKit
+					dashboard입니다. 느린 CLI 수집은 서버 백그라운드에서 처리하고, 화면은 저장된 JSON과
+					브라우저 캐시를 먼저 렌더링합니다.
+				</p>
+				<div class="pill-row" aria-label="Key tags">
+					<span class="pill">SvelteKit</span>
+					<span class="pill">node-pty</span>
+					<span class="pill">local JSON history</span>
+					<span class="pill">SSE server logs</span>
+					<span class="pill">pnpm</span>
+				</div>
+			</header>
+
+			<section>
+				<h2>Features</h2>
+				<div class="grid">
+					<article class="card">
+						<h3>Usage Cards</h3>
+						<p>
+							Claude/Codex는 current와 week 사용량을 표시하고, Gemini CLI는 모델별 사용률을
+							표시합니다.
+						</p>
+					</article>
+					<article class="card">
+						<h3>Pace Indicator</h3>
+						<p>주간 사용률 bar 위에 목표 pace를 vertical threshold marker line으로 표시합니다.</p>
+					</article>
+					<article class="card">
+						<h3>Fast Read Path</h3>
+						<p>
+							저장된 payload와 localStorage cache를 먼저 렌더링해 refresh 중에도 화면이 비지 않게
+							합니다.
+						</p>
+					</article>
+				</div>
+			</section>
+
+			<section>
+				<h2>Run</h2>
+				<p>권장 실행 명령:</p>
+				<p><code>.\scripts\start-server.ps1</code></p>
+				<p>기본 주소:</p>
+				<p><code>http://127.0.0.1:5173/</code></p>
+				<p class="note">
+					스크립트는 같은 프로젝트에서 시작한 dashboard 서버만 식별해 재시작합니다. 다른 프로세스가
+					포트를 사용 중이면 임의로 종료하지 않습니다.
+				</p>
+			</section>
+
+			<section>
+				<h2>Providers</h2>
+				<table>
+					<thead>
+						<tr>
+							<th>Provider</th>
+							<th>Command</th>
+							<th>Slash command</th>
+							<th>Dashboard output</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Claude</td>
+							<td><code>claude</code></td>
+							<td><code>/usage</code></td>
+							<td>Current, week usage</td>
+						</tr>
+						<tr>
+							<td>Codex</td>
+							<td><code>codex</code></td>
+							<td><code>/status</code></td>
+							<td>Current, week usage</td>
+						</tr>
+						<tr>
+							<td>Gemini CLI</td>
+							<td><code>gemini</code></td>
+							<td><code>/model</code></td>
+							<td>Flash, Flash Lite, Pro model usage</td>
+						</tr>
+					</tbody>
+				</table>
+			</section>
+
+			<section>
+				<h2>Implementation Flow</h2>
+				<div class="flow">
+					<div class="step">
+						<strong>1. Read</strong>
+						<span>브라우저가 <code>GET /api/usage</code>로 cached payload를 받습니다.</span>
+					</div>
+					<div class="step">
+						<strong>2. Refresh</strong>
+						<span><code>POST /api/usage/refresh</code>가 CLI 수집을 시작합니다.</span>
+					</div>
+					<div class="step">
+						<strong>3. Collect</strong>
+						<span>서버가 <code>node-pty</code>로 provider CLI를 병렬 실행합니다.</span>
+					</div>
+					<div class="step">
+						<strong>4. Store</strong>
+						<span>파싱 결과를 <code>data/usage-history.json</code>에 저장합니다.</span>
+					</div>
+				</div>
+			</section>
+
+			<section>
+				<h2>Development</h2>
+				<ul>
+					<li>Install: <code>pnpm install</code></li>
+					<li>Dev server: <code>pnpm dev</code></li>
+					<li>Type and Svelte check: <code>pnpm check</code></li>
+					<li>Production build check: <code>pnpm build</code></li>
+					<li>Detailed architecture: <a href="./architecture.md">docs/architecture.md</a></li>
+				</ul>
+			</section>
+		</main>
+	</body>
+</html>

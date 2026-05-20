@@ -1,19 +1,22 @@
 # AI Usage Dashboard
 
-로컬 Claude, Codex, Gemini CLI의 usage 상태를 한 화면에서 보는 SvelteKit 대시보드입니다.
+로컬 Claude, Codex, Gemini CLI 사용량을 한 화면에서 확인하는 SvelteKit 대시보드입니다.
 
-브라우저가 CLI를 직접 실행하지 않고, SvelteKit 서버 API가 각 CLI를 `node-pty` 가상 터미널로 실행해서 usage 출력을 수집합니다. 수집 결과는 JSON 스냅샷으로 저장되고, 화면은 저장된 JSON을 먼저 보여준 뒤 백그라운드 refresh 결과로 갱신됩니다.
+브라우저가 CLI를 직접 실행하지 않습니다. SvelteKit 서버 API가 로컬 CLI를 가상 터미널로 실행해 사용량을 수집하고, 결과를 `data/usage-history.json`에 저장합니다. 화면은 저장된 JSON과 브라우저 캐시를 먼저 보여준 뒤 백그라운드 refresh 결과로 갱신됩니다.
 
-## Features
+## 주요 기능
 
 - Claude `/usage`, Codex `/status`, Gemini CLI `/model` 수집
-- provider별 usage, reset 시간, 수집 소요 시간 표시
-- refresh 중에도 기존 JSON을 먼저 반환하는 빠른 응답 경로
-- 브라우저 `localStorage` fallback 캐시
-- 최근 usage history 최소 5세트 이상 보관
-- `data/usage-history.json` 기반 로컬 JSON 저장
+- provider별 상태, 수집 시간, reset countdown, 사용률 bar 표시
+- Claude/Codex의 current, week usage 표시
+- Gemini CLI의 Flash, Flash Lite, Pro 모델 사용률 표시
+- 주간 Pace 카드: 실제 사용률 bar와 목표 threshold marker 비교
+- 자동 refresh, 수동 refresh, refresh cooldown
+- 서버 로그 패널: `/api/server/logs` SSE 기반 실시간 로그 표시
+- 서버 종료 버튼: `/api/server/stop` 호출
+- 서버 JSON history와 브라우저 `localStorage` fallback 캐시
 
-## Run
+## 빠른 실행
 
 ```powershell
 .\scripts\start-server.ps1
@@ -22,10 +25,10 @@
 브라우저:
 
 ```text
-http://localhost:5173/
+http://127.0.0.1:5173/
 ```
 
-옵션:
+자주 쓰는 옵션:
 
 ```powershell
 .\scripts\start-server.ps1 -Open
@@ -36,21 +39,9 @@ http://localhost:5173/
 .\scripts\start-server.ps1 -Help
 ```
 
-기본 모드에서는 주소를 고정하기 위해 `--strictPort`로 실행합니다. 같은 프로젝트의 이전 `ai-usage-dashboard` 서버가 있으면 `.server/ai-usage-dashboard.json` 상태 파일과 프로세스 정보를 확인한 뒤 해당 서버만 중지하고 재시작합니다. 다른 서버가 같은 포트를 쓰는 경우에는 중지하지 않고 실패합니다.
+`start-server.ps1`은 기본적으로 `--strictPort`를 사용합니다. 같은 프로젝트에서 실행한 기존 dashboard 서버만 식별해서 재시작하고, 다른 프로세스가 포트를 사용 중이면 중지하지 않고 실패합니다.
 
-작업 관리자에서 확인하거나 수동 종료하는 방법은 다음 명령으로 볼 수 있습니다.
-
-```powershell
-.\scripts\start-server.ps1 -Help
-```
-
-현재 상태만 확인하려면 서버를 시작하거나 중지하지 않는 `-Status`를 사용합니다.
-
-```powershell
-.\scripts\start-server.ps1 -Status
-```
-
-## Development
+## 개발
 
 ```powershell
 pnpm install
@@ -64,16 +55,9 @@ pnpm check
 pnpm build
 ```
 
-## How Collection Works
+패키지 매니저는 `pnpm`을 기준으로 합니다.
 
-수집은 서버에서 실행됩니다.
-
-1. 브라우저가 `POST /api/usage/refresh`를 호출합니다.
-2. 서버가 `node-pty`로 `pwsh.exe -NoLogo -NoProfile` 가상 터미널을 엽니다.
-3. provider별 CLI를 병렬 실행합니다.
-4. 각 CLI에 slash command를 입력합니다.
-5. 터미널 출력을 파싱해서 usage JSON을 만듭니다.
-6. 결과를 `data/usage-history.json`에 저장합니다.
+## CLI 수집 대상
 
 현재 CLI working directory:
 
@@ -81,30 +65,24 @@ pnpm build
 D:\Code\_temp
 ```
 
-provider별 명령:
+| Provider   | Command  | Slash command | 표시 방식           |
+| ---------- | -------- | ------------- | ------------------- |
+| Claude     | `claude` | `/usage`      | current, week usage |
+| Codex      | `codex`  | `/status`     | current, week usage |
+| Gemini CLI | `gemini` | `/model`      | model별 usage       |
 
-| Provider   | Command  | Slash command |
-| ---------- | -------- | ------------- |
-| Claude     | `claude` | `/usage`      |
-| Codex      | `codex`  | `/status`     |
-| Gemini CLI | `gemini` | `/model`      |
+CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architecture.md)를 참고하세요.
 
-`node-pty`가 실패하면 일반 child process pipe 방식으로 fallback합니다.
+## 문서
 
-## Timing
+- [Architecture](docs/architecture.md): 구현 구조, API contract, refresh/cache 동작, 운영 메모
+- [HTML Overview](docs/index.html): 브라우저에서 바로 열 수 있는 공유용 문서
 
-각 provider 카드 우측 상단에 `Fetch 7.8s`처럼 수집 시간이 표시됩니다. 이 값은 `ProviderUsage.collectionDurationMs`에 저장됩니다.
+## 데이터
 
-최근 실측:
+- 저장 파일: `data/usage-history.json`
+- history bucket: 10분 단위
+- 보관 개수: 최근 12개 bucket, 최소 5개 이상
+- 브라우저 캐시 key: `ai-usage-payload-cache`
 
-| Provider   | 수집 시간 |
-| ---------- | --------- |
-| Gemini CLI | 약 18초   |
-| Codex      | 약 12초   |
-| Claude     | 약 8초    |
-
-전체 refresh는 provider들을 병렬로 수집하므로 가장 느린 provider가 전체 시간을 결정합니다.
-
-## Docs
-
-상세 구조는 [docs/architecture.md](docs/architecture.md)를 참고하세요.
+`data/usage-history.json`은 로컬 실행 결과이므로 Git에 올릴지 여부를 별도로 판단하세요.
