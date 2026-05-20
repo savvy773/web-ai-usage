@@ -32,7 +32,7 @@ http://127.0.0.1:5173/
 
 ```powershell
 .\scripts\start-server.ps1 -Open
-.\scripts\start-server.ps1 -Port 3000
+.\scripts\start-server.ps1 -Port 5173
 .\scripts\start-server.ps1 -Mode preview
 .\scripts\start-server.ps1 -NoRestart
 .\scripts\start-server.ps1 -Status
