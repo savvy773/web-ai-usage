@@ -65,11 +65,13 @@ pnpm build
 D:\Code\_temp
 ```
 
-| Provider   | Command  | Slash command | 표시 방식           |
-| ---------- | -------- | ------------- | ------------------- |
-| Claude     | `claude` | `/usage`      | current, week usage |
-| Codex      | `codex`  | `/status`     | current, week usage |
-| Gemini CLI | `gemini` | `/model`      | model별 usage       |
+| Provider   | Command                | Slash command | 표시 방식           |
+| ---------- | ---------------------- | ------------- | ------------------- |
+| Claude     | `claude`               | `/usage`      | current, week usage |
+| Codex      | `codex`                | `/status`     | current, week usage |
+| Gemini CLI | `gemini --skip-trust`  | `/model`      | model별 usage       |
+
+Gemini CLI만 `--skip-trust`를 사용합니다. Claude/Codex의 유사 옵션은 workspace trust 생략이 아니라 권한/승인 정책 변경에 가깝고, 현재 `/usage`, `/status` 수집에서는 속도 개선이 없거나 수집 실패를 만들 수 있어 기본 command를 유지합니다.
 
 CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architecture.md)를 참고하세요.
 

@@ -8,12 +8,18 @@ import {
 } from '$lib/usage';
 
 // eslint-disable-next-line no-control-regex
+const OSC_PATTERN = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
+// eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
 export function stripTerminalOutput(value: string) {
-	return value.replace(ANSI_PATTERN, '').replace(CONTROL_PATTERN, '').replace(/\r/g, '\n');
+	return value
+		.replace(OSC_PATTERN, '')
+		.replace(ANSI_PATTERN, '')
+		.replace(CONTROL_PATTERN, '')
+		.replace(/\r/g, '\n');
 }
 
 export function parseProviderUsage(
@@ -146,23 +152,22 @@ function applyCodexLimitLine(window: UsageWindow, line: string) {
 function parseGeminiModelUsages(lines: string[]): ModelUsage[] {
 	return lines
 		.map(parseGeminiModelUsageLine)
-		.filter((usage): usage is ModelUsage => usage !== null)
-		.filter((usage) => ['Flash', 'Flash Lite', 'Pro'].includes(usage.label));
+		.filter((usage): usage is ModelUsage => usage !== null);
 }
 
 function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 	if (!/\bresets\s*:/i.test(line)) return null;
 
-	const match = line.match(/^(.+?)\s+[▬━─█▌▐░▒▓■]+.*?(\d+(?:\.\d+)?)\s*%\s+resets\s*:\s*(.+)$/i);
+	const match = line.match(/[▬━─█▌▐░▒▓■]+.*?(\d+(?:\.\d+)?)\s*%\s+resets\s*:\s*(.+)$/i);
 	if (!match) return null;
 
-	const label = match[1].replace(/[│╭╮╰╯]/g, '').trim();
+	const label = line.slice(0, match.index).replace(/[│╭╮╰╯]/g, '').trim();
 	if (!label || /model usage/i.test(label)) return null;
 
-	const resetText = match[3].trim();
+	const resetText = match[2].trim();
 	return {
 		label,
-		percent: clampPercent(Number(match[2])) ?? 0,
+		percent: clampPercent(Number(match[1])) ?? 0,
 		resetAt: parseGeminiResetAt(resetText),
 		remainingText: parseGeminiRemainingText(resetText)
 	};
@@ -221,7 +226,7 @@ function parseRemainingText(line: string) {
 	const resetMatch = line.match(/\bresets?\s*:?\s*(.+)/i);
 	if (resetMatch) return cleanResetText(resetMatch[1]);
 
-	if (!/\b(reset|resets|renews|remaining|left|until|available)\b/i.test(line)) return null;
+	if (!/\b(reset|resets|renews|remaining|left|until)\b/i.test(line)) return null;
 
 	const duration = line.match(
 		/(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?/i

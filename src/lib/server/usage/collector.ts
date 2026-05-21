@@ -40,7 +40,7 @@ async function runSlashCommand(providerId: ProviderId, command: string, slashCom
 	try {
 		return await runPtySlashCommand(providerId, command, slashCommand);
 	} catch {
-		return await runPipeSlashCommand(command, slashCommand);
+		return await runPipeSlashCommand(providerId, command, slashCommand);
 	}
 }
 
@@ -127,15 +127,17 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 				schedule(() => safeWrite('\r', 'Failed to confirm slash command.'), 400);
 			}
 			if (providerId === 'gemini') {
-				schedule(() => {
-					const tail = output.slice(-3000);
-					if (
-						new RegExp(`>\\s*${escapeRegExp(slashCommand)}`).test(tail) &&
-						!/Select Model|Model usage/i.test(tail)
-					) {
-						safeWrite('\r', 'Failed to confirm slash command.');
-					}
-				}, 800);
+				for (const delayMs of [800, 2000, 5000]) {
+					schedule(() => {
+						const tail = output.slice(-3000);
+						if (
+							new RegExp(`>\\s*${escapeRegExp(slashCommand)}`).test(tail) &&
+							!/Select Model|Model usage/i.test(tail)
+						) {
+							safeWrite('\r', 'Failed to confirm slash command.');
+						}
+					}, delayMs);
+				}
 			}
 		};
 
@@ -158,14 +160,9 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 		terminal.onExit(() => finish(output));
 
 		schedule(writeCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs);
-		if (providerId !== 'gemini') {
-			schedule(
-				writeSlashCommand,
-				CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
-			);
-		}
+		schedule(writeSlashCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId));
 
-		schedule(() => finish(output), CLI_COLLECTION_CONFIG.captureTimeoutMs);
+		schedule(() => finish(output), captureTimeoutMs(providerId));
 	});
 }
 
@@ -192,11 +189,19 @@ function slashDelayMs(providerId: ProviderId) {
 	return Math.max(CLI_COLLECTION_CONFIG.commandDelayMs, 10_000);
 }
 
+function captureTimeoutMs(providerId: ProviderId) {
+	return (
+		CLI_COLLECTION_CONFIG.providerCaptureTimeoutMs[
+			providerId as keyof typeof CLI_COLLECTION_CONFIG.providerCaptureTimeoutMs
+		] ?? CLI_COLLECTION_CONFIG.captureTimeoutMs
+	);
+}
+
 function escapeRegExp(value: string) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function runPipeSlashCommand(command: string, slashCommand: string) {
+async function runPipeSlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
 	return await new Promise<string>((resolve, reject) => {
 		let output = '';
 		let settled = false;
@@ -245,7 +250,7 @@ async function runPipeSlashCommand(command: string, slashCommand: string) {
 			child.stdin.end();
 		}, CLI_COLLECTION_CONFIG.commandDelayMs);
 
-		const timeoutTimer = setTimeout(finish, CLI_COLLECTION_CONFIG.captureTimeoutMs);
+		const timeoutTimer = setTimeout(finish, captureTimeoutMs(providerId));
 	});
 }
 

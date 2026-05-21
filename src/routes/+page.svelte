@@ -510,11 +510,17 @@
 		<div class="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-6 sm:px-8 lg:px-10">
 			<div class="relative flex w-full items-center py-2">
 				<div class="flex items-center gap-3">
-					<div class="flex size-11 items-center justify-center rounded-md text-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.35)] ring-1 ring-cyan-400/20">
+					<div
+						class="flex size-11 items-center justify-center rounded-md text-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.35)] ring-1 ring-cyan-400/20"
+					>
 						<Activity class="size-5 drop-shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
 					</div>
 					<div>
-						<h1 class="text-xl font-semibold text-foreground drop-shadow-[0_0_8px_rgba(34,211,238,0.15)] sm:text-2xl">AI Usage</h1>
+						<h1
+							class="text-xl font-semibold text-foreground drop-shadow-[0_0_8px_rgba(34,211,238,0.15)] sm:text-2xl"
+						>
+							AI Usage
+						</h1>
 					</div>
 				</div>
 
@@ -536,13 +542,17 @@
 				</div>
 
 				<div class="ml-auto flex shrink-0 items-center">
-					<div class="flex items-stretch overflow-hidden rounded-xl border border-slate-700/60 bg-slate-900/70 shadow-[0_2px_20px_rgba(0,0,0,0.4)] backdrop-blur-sm">
+					<div
+						class="flex items-stretch overflow-hidden rounded-xl border border-slate-700/60 bg-slate-900/70 shadow-[0_2px_20px_rgba(0,0,0,0.4)] backdrop-blur-sm"
+					>
 						<button
 							type="button"
 							role="switch"
 							aria-checked={autoRefresh}
 							class={`flex cursor-pointer flex-col items-center justify-center gap-0.5 px-4 py-2.5 transition-colors duration-150 ${autoRefresh ? 'bg-cyan-500/12' : 'hover:bg-white/5'}`}
-							onclick={() => { autoRefresh = !autoRefresh; }}
+							onclick={() => {
+								autoRefresh = !autoRefresh;
+							}}
 						>
 							<div class="flex items-center gap-2">
 								<span
@@ -552,9 +562,12 @@
 										class={`absolute top-0.5 left-0.5 size-3 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out will-change-transform ${autoRefresh ? 'translate-x-3' : 'translate-x-0'}`}
 									></span>
 								</span>
-								<span class={`text-xs font-semibold tracking-wide ${autoRefresh ? 'text-cyan-200' : 'text-slate-400'}`}>Auto</span>
+								<span
+									class={`text-xs font-semibold tracking-wide ${autoRefresh ? 'text-cyan-200' : 'text-slate-400'}`}
+									>Auto</span
+								>
 							</div>
-							<span class="font-mono text-[10px] tabular-nums text-cyan-400/65">
+							<span class="font-mono text-[10px] text-cyan-400/65 tabular-nums">
 								{refreshing && refreshMode === 'auto' ? '···' : nextRefreshCountdown}
 							</span>
 						</button>
@@ -569,13 +582,18 @@
 						>
 							<div class="flex items-center gap-2">
 								{#if working}
-									<span aria-hidden="true" class="size-3 rounded-full border-[1.5px] border-violet-400/30 border-t-violet-300 motion-safe:animate-spin"></span>
+									<span
+										aria-hidden="true"
+										class="size-3 rounded-full border-[1.5px] border-violet-400/30 border-t-violet-300 motion-safe:animate-spin"
+									></span>
 								{:else}
 									<RefreshCcw class="size-3 text-violet-400" />
 								{/if}
-								<span class="text-xs font-semibold tracking-wide text-slate-300">{working ? 'Working' : 'Refresh'}</span>
+								<span class="text-xs font-semibold tracking-wide text-slate-300"
+									>{working ? 'Working' : 'Refresh'}</span
+								>
 							</div>
-							<span class="font-mono text-[10px] tabular-nums text-violet-400/65">
+							<span class="font-mono text-[10px] text-violet-400/65 tabular-nums">
 								{refreshCooldownCountdown ?? (working ? '···' : ' ')}
 							</span>
 						</button>
@@ -694,7 +712,6 @@
 												</div>
 											</div>
 										</div>
-
 									</div>
 								{/each}
 							{/if}
@@ -749,9 +766,7 @@
 						{#if provider.provider !== 'gemini'}
 							{@const pace = weeklyPace(provider.windows.week)}
 							{#if pace}
-								<div
-									class={`mt-3 rounded-md border px-3 py-3 text-xs ${pace.surface}`}
-								>
+								<div class={`mt-3 rounded-md border px-3 py-3 text-xs ${pace.surface}`}>
 									<div class="flex items-center justify-between gap-3">
 										<div class="flex items-center gap-2">
 											<span class={`size-2 rounded-full ${pace.dot}`}></span>

@@ -38,11 +38,11 @@ AI Usage Dashboard는 로컬 CLI 사용량을 빠르게 확인하기 위한 Svel
 
 provider별 CLI 수집은 병렬로 실행됩니다.
 
-| Provider   | Command  | Slash command |
-| ---------- | -------- | ------------- |
-| Claude     | `claude` | `/usage`      |
-| Codex      | `codex`  | `/status`     |
-| Gemini CLI | `gemini` | `/model`      |
+| Provider   | Command                | Slash command |
+| ---------- | ---------------------- | ------------- |
+| Claude     | `claude`               | `/usage`      |
+| Codex      | `codex`                | `/status`     |
+| Gemini CLI | `gemini --skip-trust`  | `/model`      |
 
 전체 refresh 시간은 세 provider 시간의 합이 아니라 가장 느린 provider에 의해 결정됩니다.
 
@@ -52,7 +52,7 @@ provider별 CLI 수집은 병렬로 실행됩니다.
 | ------------------------- | --------------- |
 | CLI working directory     | `D:\Code\_temp` |
 | shell                     | `pwsh.exe`      |
-| capture timeout           | 45초            |
+| capture timeout           | 45초, Gemini 90초 |
 | history bucket interval   | 10분            |
 | prefetch lead time        | 30초 전         |
 | quick refresh wait        | 2초             |
@@ -73,7 +73,9 @@ provider별 CLI 수집은 병렬로 실행됩니다.
 
 `node-pty` 실행이 실패하면 일반 child process pipe 방식으로 fallback합니다.
 
-Gemini CLI에는 `GEMINI_CLI_TRUST_WORKSPACE=true` 환경 변수를 전달합니다.
+Gemini CLI에는 `--skip-trust`와 `GEMINI_CLI_TRUST_WORKSPACE=true`를 함께 전달합니다. 대시보드의 숨은 `node-pty` 세션에서는 Gemini ready prompt가 늦게 뜰 수 있어 `/model` 입력을 ready 감지와 별도로 예약합니다.
+
+Claude/Codex는 기본 command를 유지합니다. Claude의 `--permission-mode bypassPermissions`, Codex의 `--ask-for-approval never`/`--sandbox` 계열 옵션은 workspace trust skip이 아니라 권한/승인 정책 변경이며, usage 조회 수집에서 속도 이득이 없거나 Codex `/status` 수집을 깨뜨릴 수 있습니다.
 
 ## UI 동작
 

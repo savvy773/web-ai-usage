@@ -16,7 +16,7 @@ param(
 )
 
 # 숨김 창으로 자기 재실행 (터미널 독립 실행)
-if (-not $env:AI_USAGE_HIDDEN) {
+if (-not $env:AI_USAGE_HIDDEN -and -not $Status -and -not $Help) {
 	$env:AI_USAGE_HIDDEN = '1'
 	$argList = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode -HostName $HostName -Port $Port"
 	if ($Open) { $argList += ' -Open' }

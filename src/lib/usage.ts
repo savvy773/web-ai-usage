@@ -3,6 +3,9 @@ export const CLI_COLLECTION_CONFIG = {
 	shellCommandDelayMs: 500,
 	commandDelayMs: 6000,
 	captureTimeoutMs: 45_000,
+	providerCaptureTimeoutMs: {
+		gemini: 90_000
+	},
 	shell: {
 		command: 'pwsh.exe',
 		args: ['-NoLogo', '-NoProfile']
@@ -30,7 +33,7 @@ export const PROVIDERS = [
 	{
 		id: 'gemini',
 		name: 'Gemini CLI',
-		command: 'gemini',
+		command: 'gemini --skip-trust',
 		slashCommand: '/model',
 		usageUrl: null
 	}

@@ -1,19 +1,23 @@
-import { pushLog } from '$lib/server/log-buffer';
+import { pushLog, type LogEntry } from '$lib/server/log-buffer';
 import type { Handle } from '@sveltejs/kit';
 
-const _log = console.log.bind(console);
-const _warn = console.warn.bind(console);
-const _error = console.error.bind(console);
-const _info = console.info.bind(console);
+const ESC = String.fromCharCode(27);
 
 // Skip Vite internal logs that contain ANSI escape codes
 const isInternal = (...args: unknown[]) =>
-	args.some((a) => typeof a === 'string' && /\x1b\[/.test(a));
+	args.some((a) => typeof a === 'string' && a.includes(`${ESC}[`));
 
-console.log = (...args) => { _log(...args); if (!isInternal(...args)) pushLog('log', ...args); };
-console.warn = (...args) => { _warn(...args); if (!isInternal(...args)) pushLog('warn', ...args); };
-console.error = (...args) => { _error(...args); if (!isInternal(...args)) pushLog('error', ...args); };
-console.info = (...args) => { _info(...args); if (!isInternal(...args)) pushLog('info', ...args); };
+function captureConsole(level: LogEntry['level'], original: (...args: unknown[]) => void) {
+	return (...args: unknown[]) => {
+		original(...args);
+		if (!isInternal(...args)) pushLog(level, ...args);
+	};
+}
+
+console.log = captureConsole('log', console.log.bind(console));
+console.warn = captureConsole('warn', console.warn.bind(console));
+console.error = captureConsole('error', console.error.bind(console));
+console.info = captureConsole('info', console.info.bind(console));
 
 console.info('[server] Started.');
 
