@@ -6,9 +6,14 @@ type PtyModule = typeof import('node-pty');
 
 const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
+const MAX_COLLECTION_ATTEMPTS = 2;
+const COLLECTION_RETRY_DELAY_MS = 1500;
 
 export async function collectAllUsage(): Promise<ProviderUsage[]> {
-	const results = await Promise.all(PROVIDERS.map((provider) => collectProvider(provider.id)));
+	const results: ProviderUsage[] = [];
+	for (const provider of PROVIDERS) {
+		results.push(await collectProvider(provider.id));
+	}
 	return results;
 }
 
@@ -19,14 +24,32 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	}
 
 	const startedAt = performance.now();
+	let latestResult: ProviderUsage | null = null;
 
-	try {
-		const output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
-		return withCollectionDuration(parseProviderUsage(provider.id, output), startedAt);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : 'Unknown collection error';
-		return withCollectionDuration(parseProviderUsage(provider.id, '', message), startedAt);
+	for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
+		try {
+			const output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
+			latestResult = parseProviderUsage(provider.id, output);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unknown collection error';
+			latestResult = parseProviderUsage(provider.id, '', message);
+		}
+
+		if (latestResult.status === 'ok') {
+			return withCollectionDuration(latestResult, startedAt);
+		}
+
+		console.warn(
+			`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}`
+		);
+
+		if (attempt < MAX_COLLECTION_ATTEMPTS) {
+			await delay(COLLECTION_RETRY_DELAY_MS);
+		}
 	}
+
+	latestResult ??= parseProviderUsage(provider.id, '', 'Collection did not run.');
+	return withCollectionDuration(latestResult, startedAt);
 }
 
 function withCollectionDuration(provider: ProviderUsage, startedAt: number): ProviderUsage {
@@ -160,7 +183,10 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 		terminal.onExit(() => finish(output));
 
 		schedule(writeCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs);
-		schedule(writeSlashCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId));
+		schedule(
+			writeSlashCommand,
+			CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
+		);
 
 		schedule(() => finish(output), captureTimeoutMs(providerId));
 	});
@@ -277,4 +303,10 @@ function hasCodexLimitLines(output: string) {
 function appendCapturedOutput(output: string, chunk: string) {
 	const nextOutput = output + chunk;
 	return nextOutput.length > MAX_CAPTURE_CHARS ? nextOutput.slice(-MAX_CAPTURE_CHARS) : nextOutput;
+}
+
+function delay(ms: number) {
+	return new Promise<void>((resolve) => {
+		setTimeout(resolve, ms);
+	});
 }

@@ -57,7 +57,10 @@ export async function recordUsageSnapshot(providers: ProviderUsage[]): Promise<U
 	const history = await readHistory();
 	const bucketStart = new Date(Math.floor(now.getTime() / BUCKET_MS) * BUCKET_MS).toISOString();
 	const providerMap = Object.fromEntries(
-		providers.map((provider) => [provider.provider, compactProviderUsage(provider)])
+		providers.map((provider) => [
+			provider.provider,
+			compactProviderUsage(resolveProviderSnapshot(provider, history))
+		])
 	) as Record<ProviderId, ProviderUsage>;
 	const existingIndex = history.findIndex((bucket) => bucket.bucketStart === bucketStart);
 
@@ -89,6 +92,46 @@ function compactProviderUsage(provider: ProviderUsage): ProviderUsage {
 		...provider,
 		rawPreview: null
 	};
+}
+
+function resolveProviderSnapshot(provider: ProviderUsage, history: UsageBucket[]): ProviderUsage {
+	if (provider.status === 'ok') return provider;
+
+	const previous = findLatestUsableProvider(history, provider.provider);
+	if (!previous) return provider;
+
+	console.warn(
+		`[storage] Keeping previous ${provider.provider} usage after ${provider.status}: ${provider.message}`
+	);
+
+	return {
+		...previous,
+		status: provider.status,
+		message: `Previous data kept; latest refresh ${provider.status}: ${provider.message}`,
+		collectionDurationMs: provider.collectionDurationMs,
+		rawPreview: provider.rawPreview
+	};
+}
+
+function findLatestUsableProvider(
+	history: UsageBucket[],
+	providerId: ProviderId
+): ProviderUsage | null {
+	for (let index = history.length - 1; index >= 0; index -= 1) {
+		const provider = history[index].providers[providerId];
+		if (provider && isUsableProvider(provider)) return provider;
+	}
+	return null;
+}
+
+function isUsableProvider(provider: ProviderUsage) {
+	return (
+		provider.modelUsages.length > 0 ||
+		provider.windows.fiveHour.percent !== null ||
+		provider.windows.week.percent !== null ||
+		provider.windows.fiveHour.used !== null ||
+		provider.windows.week.used !== null
+	);
 }
 
 function compactBucket(bucket: UsageBucket): UsageBucket {

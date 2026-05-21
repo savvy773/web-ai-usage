@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		Activity,
 		AlertTriangle,
@@ -17,10 +17,14 @@
 		timestamp: string;
 	}
 	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
+	import type { PageData } from './$types';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
 	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 	const USAGE_CACHE_KEY = 'ai-usage-payload-cache';
+	const USAGE_REQUEST_TIMEOUT_MS = 10_000;
+	const USAGE_REQUEST_RETRIES = 2;
+	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
@@ -44,8 +48,11 @@
 		day: 'numeric'
 	});
 
-	let payload = $state<UsagePayload | null>(null);
-	let loading = $state(true);
+	let { data }: { data: PageData } = $props();
+	const initialPayload = untrack(() => data.initialPayload);
+
+	let payload = $state<UsagePayload | null>(initialPayload ?? null);
+	let loading = $state(!initialPayload);
 	let refreshing = $state(false);
 	let error = $state<string | null>(null);
 	let now = $state(new Date());
@@ -88,11 +95,19 @@
 	onMount(() => {
 		restoreRefreshCooldown();
 		const cachedPayload = readCachedPayload();
-		if (cachedPayload) {
+		if (payload) {
+			cachePayload(payload);
+			loading = false;
+		} else if (cachedPayload) {
 			payload = cachedPayload;
 			loading = false;
 		}
-		void loadUsage({ refreshAfterLoad: true });
+		if (!payload) {
+			void loadUsage({ refreshAfterLoad: true });
+		} else if (!initialRefreshStarted && !isRefreshCoolingDown(refreshCooldownUntil)) {
+			initialRefreshStarted = true;
+			window.setTimeout(() => void refreshUsage('auto'), 250);
+		}
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
 		}, 1000);
@@ -118,9 +133,7 @@
 		error = null;
 
 		try {
-			const response = await fetch('/api/usage');
-			if (!response.ok) throw new Error(`Usage request failed: ${response.status}`);
-			applyPayload((await response.json()) as UsagePayload);
+			applyPayload(await fetchUsagePayload('/api/usage'));
 			if (options.refreshAfterLoad && !initialRefreshStarted) {
 				if (isRefreshCoolingDown(refreshCooldownUntil)) {
 					return;
@@ -151,17 +164,21 @@
 		const previousCollectedAt = latestCollectedAt(payload);
 
 		try {
-			const response = await fetch('/api/usage/refresh', { method: 'POST' });
-			if (!response.ok) throw new Error(`Refresh failed: ${response.status}`);
-			const refreshedPayload = (await response.json()) as UsagePayload;
+			const { payload: refreshedPayload, status } = await fetchUsageResponse('/api/usage/refresh', {
+				method: 'POST',
+				timeoutMs: REFRESH_REQUEST_TIMEOUT_MS,
+				retries: 0,
+				errorPrefix: 'Refresh failed'
+			});
 			applyPayload(refreshedPayload);
 
-			if (response.status === 202 || refreshedPayload.refreshState?.refreshing) {
+			if (status === 202 || refreshedPayload.refreshState?.refreshing) {
 				await pollUsageUntilSettled(previousCollectedAt);
 			}
 		} catch (requestError) {
 			error =
 				requestError instanceof Error ? requestError.message : 'Failed to refresh usage data.';
+			await pollUsageUntilSettled(previousCollectedAt);
 		} finally {
 			refreshing = false;
 			loading = false;
@@ -173,10 +190,8 @@
 		for (let attempt = 0; attempt < REFRESH_POLL_ATTEMPTS; attempt += 1) {
 			await delay(REFRESH_POLL_INTERVAL_MS);
 
-			const response = await fetch('/api/usage');
-			if (!response.ok) continue;
-
-			const polledPayload = (await response.json()) as UsagePayload;
+			const polledPayload = await fetchUsagePayload('/api/usage').catch(() => null);
+			if (!polledPayload) continue;
 			applyPayload(polledPayload);
 
 			const collectedAt = latestCollectedAt(polledPayload);
@@ -188,6 +203,10 @@
 
 	function applyPayload(nextPayload: UsagePayload) {
 		payload = nextPayload;
+		cachePayload(nextPayload);
+	}
+
+	function cachePayload(nextPayload: UsagePayload) {
 		try {
 			localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(nextPayload));
 		} catch {
@@ -204,6 +223,54 @@
 			localStorage.removeItem(USAGE_CACHE_KEY);
 			return null;
 		}
+	}
+
+	async function fetchUsagePayload(url: string) {
+		const result = await fetchUsageResponse(url, {
+			timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
+			retries: USAGE_REQUEST_RETRIES,
+			errorPrefix: 'Usage request failed'
+		});
+		return result.payload;
+	}
+
+	async function fetchUsageResponse(
+		url: string,
+		options: {
+			method?: 'GET' | 'POST';
+			timeoutMs: number;
+			retries: number;
+			errorPrefix: string;
+		}
+	) {
+		let lastError: unknown;
+		for (let attempt = 0; attempt <= options.retries; attempt += 1) {
+			const controller = new AbortController();
+			const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs);
+			try {
+				const response = await fetch(url, {
+					method: options.method ?? 'GET',
+					signal: controller.signal
+				});
+				if (!response.ok) throw new Error(`${options.errorPrefix}: ${response.status}`);
+				return {
+					payload: (await response.json()) as UsagePayload,
+					status: response.status
+				};
+			} catch (error) {
+				lastError = error;
+				if (attempt < options.retries) {
+					await delay(350 * (attempt + 1));
+				}
+			} finally {
+				window.clearTimeout(timeout);
+			}
+		}
+
+		if (lastError instanceof DOMException && lastError.name === 'AbortError') {
+			throw new Error(`${options.errorPrefix}: timeout`);
+		}
+		throw lastError instanceof Error ? lastError : new Error(options.errorPrefix);
 	}
 
 	function latestCollectedAt(nextPayload: UsagePayload | null) {
@@ -549,7 +616,7 @@
 							type="button"
 							role="switch"
 							aria-checked={autoRefresh}
-							class={`flex cursor-pointer flex-col items-center justify-center gap-0.5 px-4 py-2.5 transition-colors duration-150 ${autoRefresh ? 'bg-cyan-500/12' : 'hover:bg-white/5'}`}
+							class={`flex cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-2.5 transition-colors duration-150 ${autoRefresh ? 'bg-cyan-500/12' : 'hover:bg-white/5'}`}
 							onclick={() => {
 								autoRefresh = !autoRefresh;
 							}}
@@ -567,7 +634,7 @@
 									>Auto</span
 								>
 							</div>
-							<span class="font-mono text-[10px] text-cyan-400/65 tabular-nums">
+							<span class="font-mono text-[10px] font-medium text-cyan-200/90 tabular-nums">
 								{refreshing && refreshMode === 'auto' ? '···' : nextRefreshCountdown}
 							</span>
 						</button>
@@ -576,7 +643,7 @@
 
 						<button
 							type="button"
-							class="flex cursor-pointer flex-col items-center justify-center gap-0.5 px-4 py-2.5 transition-colors duration-150 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+							class="flex cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-2.5 transition-colors duration-150 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50"
 							disabled={refreshLocked}
 							onclick={() => void refreshUsage('manual')}
 						>
@@ -593,7 +660,7 @@
 									>{working ? 'Working' : 'Refresh'}</span
 								>
 							</div>
-							<span class="font-mono text-[10px] text-violet-400/65 tabular-nums">
+							<span class="font-mono text-[10px] font-medium text-violet-200/90 tabular-nums">
 								{refreshCooldownCountdown ?? (working ? '···' : ' ')}
 							</span>
 						</button>

@@ -38,27 +38,27 @@ AI Usage Dashboard는 로컬 CLI 사용량을 빠르게 확인하기 위한 Svel
 
 provider별 CLI 수집은 병렬로 실행됩니다.
 
-| Provider   | Command                | Slash command |
-| ---------- | ---------------------- | ------------- |
-| Claude     | `claude`               | `/usage`      |
-| Codex      | `codex`                | `/status`     |
-| Gemini CLI | `gemini --skip-trust`  | `/model`      |
+| Provider   | Command               | Slash command |
+| ---------- | --------------------- | ------------- |
+| Claude     | `claude`              | `/usage`      |
+| Codex      | `codex`               | `/status`     |
+| Gemini CLI | `gemini --skip-trust` | `/model`      |
 
 전체 refresh 시간은 세 provider 시간의 합이 아니라 가장 느린 provider에 의해 결정됩니다.
 
 현재 주요 설정:
 
-| 항목                      | 값              |
-| ------------------------- | --------------- |
-| CLI working directory     | `D:\Code\_temp` |
-| shell                     | `pwsh.exe`      |
+| 항목                      | 값                |
+| ------------------------- | ----------------- |
+| CLI working directory     | `D:\Code\_temp`   |
+| shell                     | `pwsh.exe`        |
 | capture timeout           | 45초, Gemini 90초 |
-| history bucket interval   | 10분            |
-| prefetch lead time        | 30초 전         |
-| quick refresh wait        | 2초             |
-| frontend polling interval | 1.5초           |
-| frontend polling attempts | 24회            |
-| manual refresh cooldown   | 10초            |
+| history bucket interval   | 10분              |
+| prefetch lead time        | 30초 전           |
+| quick refresh wait        | 2초               |
+| frontend polling interval | 1.5초             |
+| frontend polling attempts | 24회              |
+| manual refresh cooldown   | 10초              |
 
 ## CLI 실행 방식
 

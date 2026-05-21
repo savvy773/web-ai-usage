@@ -161,7 +161,10 @@ function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 	const match = line.match(/[▬━─█▌▐░▒▓■]+.*?(\d+(?:\.\d+)?)\s*%\s+resets\s*:\s*(.+)$/i);
 	if (!match) return null;
 
-	const label = line.slice(0, match.index).replace(/[│╭╮╰╯]/g, '').trim();
+	const label = line
+		.slice(0, match.index)
+		.replace(/[│╭╮╰╯]/g, '')
+		.trim();
 	if (!label || /model usage/i.test(label)) return null;
 
 	const resetText = match[2].trim();

@@ -4,6 +4,7 @@ export const CLI_COLLECTION_CONFIG = {
 	commandDelayMs: 6000,
 	captureTimeoutMs: 45_000,
 	providerCaptureTimeoutMs: {
+		codex: 60_000,
 		gemini: 90_000
 	},
 	shell: {
