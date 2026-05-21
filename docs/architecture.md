@@ -1,5 +1,11 @@
 # AI Usage Dashboard Architecture
 
+D:\Code\_toolkit\aI_usage
+
+D:\Code\_toolkit\aI_usage\scripts\start-server.ps1
+http://127.0.0.1:5173/
+
+
 ## 목적
 
 AI Usage Dashboard는 로컬 CLI 사용량을 빠르게 확인하기 위한 SvelteKit 앱입니다.
