@@ -1,4 +1,4 @@
-import { getBuffer, subscribe } from '$lib/server/log-buffer';
+import { clearBuffer, getBuffer, subscribe } from '$lib/server/log-buffer';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = () => {
@@ -30,4 +30,9 @@ export const GET: RequestHandler = () => {
 			Connection: 'keep-alive'
 		}
 	});
+};
+
+export const DELETE: RequestHandler = () => {
+	clearBuffer();
+	return new Response(null, { status: 204 });
 };

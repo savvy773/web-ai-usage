@@ -191,8 +191,12 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 				slashReadyTimer ??= schedule(writeSlashCommand, 350);
 			}
 
-			if (wroteSlashCommand && !usageSettleTimer && hasUsageOutput(providerId, output)) {
-				usageSettleTimer = schedule(() => finish(output), USAGE_OUTPUT_SETTLE_MS);
+			if (wroteSlashCommand && hasUsageOutput(providerId, output)) {
+				if (usageSettleTimer) {
+					clearTimeout(usageSettleTimer);
+					timers.delete(usageSettleTimer);
+				}
+				usageSettleTimer = schedule(() => finish(output), usageOutputSettleMs(providerId));
 			}
 		});
 
@@ -237,6 +241,11 @@ function captureTimeoutMs(providerId: ProviderId) {
 			providerId as keyof typeof CLI_COLLECTION_CONFIG.providerCaptureTimeoutMs
 		] ?? CLI_COLLECTION_CONFIG.captureTimeoutMs
 	);
+}
+
+function usageOutputSettleMs(providerId: ProviderId) {
+	if (providerId === 'gemini') return 3000;
+	return USAGE_OUTPUT_SETTLE_MS;
 }
 
 function escapeRegExp(value: string) {
@@ -297,23 +306,19 @@ async function runPipeSlashCommand(providerId: ProviderId, command: string, slas
 }
 
 function hasUsageOutput(providerId: ProviderId, output: string) {
+	const parsed = parseProviderUsage(providerId, output);
 	if (providerId === 'codex') {
-		return hasCodexLimitLines(output);
+		return parsed.windows.fiveHour.percent !== null && parsed.windows.week.percent !== null;
 	}
 
-	const parsed = parseProviderUsage(providerId, output);
+	if (providerId === 'gemini') {
+		return (
+			parsed.modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
+				.length >= 3
+		);
+	}
+
 	return parsed.status === 'ok';
-}
-
-function hasCodexLimitLines(output: string) {
-	const lines = stripTerminalOutput(output)
-		.split('\n')
-		.map((line) => line.trim());
-
-	return (
-		lines.some((line) => /(?:^|[│\s])5h\s+limit\s*:/i.test(line)) &&
-		lines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line))
-	);
 }
 
 function appendCapturedOutput(output: string, chunk: string) {
@@ -345,26 +350,44 @@ function describeCollectionResult(
 }
 
 function usageMarkers(providerId: ProviderId, lines: string[]) {
+	const normalizedLines = lines.map(normalizeCollectorMarkerLine);
+
 	if (providerId === 'codex') {
 		return [
-			lines.some((line) => /(?:^|[│\s])5h\s+limit\s*:/i.test(line)) ? '5h-limit' : null,
-			lines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line)) ? 'week-limit' : null
+			normalizedLines.some((line) => /(?:^|[│\s])5h\s+limit\s*:/i.test(line)) ? '5h-limit' : null,
+			normalizedLines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line))
+				? 'week-limit'
+				: null
 		].filter((marker): marker is string => marker !== null);
 	}
 
 	if (providerId === 'gemini') {
 		return [
-			lines.some((line) => /model usage|select model/i.test(line)) ? 'model-screen' : null,
-			lines.some((line) => /\b(?:flash|pro)\b/i.test(line)) ? 'model-name' : null,
-			lines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null,
-			lines.some((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line)) ? 'percent-reset' : null
+			normalizedLines.some((line) => /model usage|select model/i.test(line))
+				? 'model-screen'
+				: null,
+			normalizedLines.some((line) => /\b(?:flash|pro)\b/i.test(line)) ? 'model-name' : null,
+			normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null,
+			normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line))
+				? 'percent-reset'
+				: null
 		].filter((marker): marker is string => marker !== null);
 	}
 
 	return [
-		lines.some((line) => /\busage\b/i.test(line)) ? 'usage-word' : null,
-		lines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null
+		normalizedLines.some((line) => /\busage\b/i.test(line)) ? 'usage-word' : null,
+		normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null
 	].filter((marker): marker is string => marker !== null);
+}
+
+function normalizeCollectorMarkerLine(line: string) {
+	return line
+		.replace(/[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤]/g, ' ')
+		.replace(/[▬━─═╌╍▔▁█▌▐░▒▓■□▱▰▯▮▭]+/g, ' ')
+		.replace(/\s*(\d+(?:\.\d+)?)\s*%\s*/g, ' $1% ')
+		.replace(/\bResets?\s*:?\s*/gi, ' Resets: ')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 function formatDuration(ms: number) {

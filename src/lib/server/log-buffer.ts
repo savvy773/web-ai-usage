@@ -34,6 +34,10 @@ export function getBuffer(): LogEntry[] {
 	return [...buffer];
 }
 
+export function clearBuffer() {
+	buffer.length = 0;
+}
+
 export function subscribe(fn: (entry: LogEntry) => void): () => void {
 	subscribers.add(fn);
 	return () => subscribers.delete(fn);

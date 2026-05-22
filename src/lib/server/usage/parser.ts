@@ -31,8 +31,8 @@ function normalizeProviderUsageLine(providerId: ProviderId, line: string) {
 
 function normalizeDecoratedUsageLine(line: string) {
 	return line
-		.replace(/[│╭╮╰╯]/g, ' ')
-		.replace(/[▬━─█▌▐░▒▓■□▱▰▯▮▭]+/g, ' ')
+		.replace(/[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤]/g, ' ')
+		.replace(/[▬━─═╌╍▔▁█▌▐░▒▓■□▱▰▯▮▭]+/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim();
 }
@@ -66,11 +66,13 @@ export function parseProviderUsage(
 	const week = providerId === 'gemini' ? createEmptyWindow('week') : parseWindow(lines, 'week');
 	const modelUsages = providerId === 'gemini' ? parseGeminiModelUsages(output, lines) : [];
 	const hasUsage =
-		fiveHour.percent !== null ||
-		week.percent !== null ||
-		fiveHour.used !== null ||
-		week.used !== null ||
-		modelUsages.length > 0;
+		providerId === 'gemini'
+			? modelUsages.length >= 3
+			: fiveHour.percent !== null ||
+				week.percent !== null ||
+				fiveHour.used !== null ||
+				week.used !== null ||
+				modelUsages.length > 0;
 	const hasOutput = output.length > 0;
 	const looksLikeCliProblem =
 		/not recognized|command not found|not found|enoent|login|auth|permission denied/i.test(
@@ -173,27 +175,84 @@ function applyCodexLimitLine(window: UsageWindow, line: string) {
 }
 
 function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
+	const usageSection = extractGeminiModelUsageSection(output);
+	const sectionLines = extractGeminiModelUsageSectionLines(output);
+	const sectionUsages = parseGeminiPercentResetRows(sectionLines);
+	if (sectionUsages.length >= 3) {
+		return mergeGeminiModelUsages(sectionUsages);
+	}
+
+	const candidateLines = buildGeminiCandidateLines(output, lines);
 	const usages = [
 		...parseGeminiModelUsageScreen(output),
-		...parseGeminiLooseModelUsageSpans(output),
-		...parseGeminiPercentResetRows(lines),
-		...parseGeminiSplitModelUsageLines(lines),
-		...lines
+		...(usageSection ? parseGeminiModelUsageSpans(usageSection) : []),
+		...parseGeminiPercentResetRows(candidateLines),
+		...parseGeminiSplitModelUsageLines(candidateLines),
+		...candidateLines
 			.map(parseGeminiModelUsageLine)
 			.filter((usage): usage is ModelUsage => usage !== null)
 	];
+
+	return mergeGeminiModelUsages(usages);
+}
+
+function extractGeminiModelUsageSection(output: string) {
+	return (
+		stripTerminalOutput(output).match(
+			/Model usage([\s\S]*?)(?:\(\s*Press Esc\s+to\s+close\s*\)|\n\s*╰|$)/i
+		)?.[1] ?? null
+	);
+}
+
+function extractGeminiModelUsageSectionLines(output: string) {
+	const section = extractGeminiModelUsageSection(output);
+	if (!section) return [];
+
+	return section
+		.split('\n')
+		.map((line) => normalizeGeminiUsageLine(line))
+		.filter((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line));
+}
+
+function mergeGeminiModelUsages(usages: ModelUsage[]) {
+	const byLabel = new Map<string, ModelUsage>();
+
+	for (const usage of usages) {
+		const label = cleanGeminiModelLabel(usage.label);
+		if (!isGeminiModelUsageLabel(label)) continue;
+
+		const normalized = { ...usage, label };
+		const previous = byLabel.get(label);
+		if (!previous || geminiUsageCompleteness(normalized) >= geminiUsageCompleteness(previous)) {
+			byLabel.set(label, normalized);
+		}
+	}
+
+	return [...byLabel.values()];
+}
+
+function buildGeminiCandidateLines(output: string, lines: string[]) {
+	const rawCandidates = stripTerminalOutput(output)
+		.replace(/[│┃║]/g, '\n')
+		.split('\n')
+		.map((line) => normalizeGeminiUsageLine(line))
+		.filter(Boolean);
 	const seen = new Set<string>();
 
-	return usages.filter((usage) => {
-		const key = `${usage.label}:${usage.percent}:${usage.remainingText ?? ''}`;
-		if (seen.has(key)) return false;
-		seen.add(key);
+	return [...lines, ...rawCandidates].filter((line) => {
+		const normalized = normalizeGeminiUsageLine(line);
+		if (!normalized || seen.has(normalized)) return false;
+		seen.add(normalized);
 		return true;
 	});
 }
 
+function geminiUsageCompleteness(usage: ModelUsage) {
+	return (usage.resetAt ? 2 : 0) + (usage.remainingText ? 1 : 0);
+}
+
 function parseGeminiModelUsageScreen(output: string): ModelUsage[] {
-	const usageSection = output.match(/Model usage([\s\S]*?)(?:\(Press Esc|\n\s*╰|$)/i)?.[1] ?? output;
+	const usageSection = extractGeminiModelUsageSection(output) ?? output;
 	const usages: ModelUsage[] = [];
 	const pattern =
 		/(?:^|\n|│)\s*([A-Za-z][A-Za-z0-9 ._\-…]*?)\s*[▬━─█▌▐░▒▓■□▱▰▯▮▭ ]{8,}\s+(\d+(?:\.\d+)?)\s*%\s*(?:Resets?\s*:?\s*([^\n│]+))?/gi;
@@ -201,6 +260,27 @@ function parseGeminiModelUsageScreen(output: string): ModelUsage[] {
 	for (const match of usageSection.matchAll(pattern)) {
 		const label = cleanGeminiModelLabel(match[1]);
 		if (!label) continue;
+
+		const resetText = match[3]?.trim() ?? null;
+		usages.push({
+			label,
+			percent: clampPercent(Number(match[2])) ?? 0,
+			resetAt: resetText ? parseGeminiResetAt(resetText) : null,
+			remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+		});
+	}
+
+	return usages;
+}
+
+function parseGeminiModelUsageSpans(section: string): ModelUsage[] {
+	const usages: ModelUsage[] = [];
+	const pattern =
+		/\b(Flash Lite|Flash|Pro|gemini-[^\s│┃║]+)[\s\S]{0,240}?(\d+(?:\.\d+)?)\s*%\s*(?:Resets?\s*:?\s*([^\n│┃║]+))?/gi;
+
+	for (const match of section.matchAll(pattern)) {
+		const label = cleanGeminiModelLabel(match[1]);
+		if (!isGeminiModelUsageLabel(label)) continue;
 
 		const resetText = match[3]?.trim() ?? null;
 		usages.push({
@@ -238,25 +318,6 @@ function parseGeminiPercentResetRows(lines: string[]): ModelUsage[] {
 			};
 		})
 		.filter((usage): usage is ModelUsage => usage !== null);
-}
-
-function parseGeminiLooseModelUsageSpans(output: string): ModelUsage[] {
-	const usages: ModelUsage[] = [];
-	const pattern =
-		/\b(Flash Lite|Flash|Pro|gemini-[^\s│]+)[\s\S]{0,250}?(\d+(?:\.\d+)?)\s*%\s*(?:Resets?\s*:?\s*([^\n│]+))?/gi;
-
-	for (const match of output.matchAll(pattern)) {
-		const label = cleanGeminiModelLabel(match[1]);
-		const resetText = match[3]?.trim() ?? null;
-		usages.push({
-			label,
-			percent: clampPercent(Number(match[2])) ?? 0,
-			resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-			remainingText: resetText ? parseGeminiRemainingText(resetText) : null
-		});
-	}
-
-	return usages;
 }
 
 function parseGeminiSplitModelUsageLines(lines: string[]): ModelUsage[] {
@@ -298,10 +359,7 @@ function parseGeminiSplitModelUsageLines(lines: string[]): ModelUsage[] {
 
 function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 	const normalized = normalizeGeminiUsageLine(line);
-	if (
-		!/\b(?:flash|pro)\b|^gemini-/i.test(normalized) ||
-		/model usage|select model/i.test(normalized)
-	) {
+	if (/model usage|select model/i.test(normalized)) {
 		return null;
 	}
 
@@ -309,7 +367,7 @@ function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 	if (!percentMatch || percentMatch.index === undefined) return null;
 
 	const label = cleanGeminiModelLabel(normalized.slice(0, percentMatch.index));
-	if (!label || /model usage/i.test(label)) return null;
+	if (!isGeminiModelUsageLabel(label)) return null;
 
 	const resetMatch = normalized
 		.slice(percentMatch.index + percentMatch[0].length)
@@ -335,18 +393,38 @@ function parseGeminiModelLabelOnly(line: string) {
 	}
 
 	const label = cleanGeminiModelLabel(normalized);
-	if (!/\b(?:flash|pro)\b|^gemini-/i.test(label)) return null;
+	if (!isGeminiModelUsageLabel(label)) return null;
 	if (label.length > 40) return null;
 
 	return label;
 }
 
 function normalizeGeminiUsageLine(value: string) {
-	return normalizeDecoratedUsageLine(value);
+	return normalizeDecoratedUsageLine(value)
+		.replace(/\s*(\d+(?:\.\d+)?)\s*%\s*/g, ' $1% ')
+		.replace(/\bResets?\s*:?\s*/gi, ' Resets: ')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 function cleanGeminiModelLabel(value: string) {
-	return normalizeGeminiUsageLine(value);
+	return normalizeGeminiUsageLine(value)
+		.replace(/^[>*•●○◉◆◇▶▷❯›\-\s]+/, '')
+		.replace(/\s+\d+(?:\.\d+)?\s*%.*$/i, '')
+		.replace(/\s+Resets?:.*$/i, '')
+		.replace(/[,\s]+$/g, '')
+		.trim();
+}
+
+function isGeminiModelUsageLabel(value: string) {
+	return (
+		value.length > 0 &&
+		value.length <= 80 &&
+		/[a-z0-9]/i.test(value) &&
+		!/model usage|select model|let gemini|remember model|press esc|startup|manual|auto|resets?/i.test(
+			value
+		)
+	);
 }
 
 function findUsageSection(lines: string[], windowId: 'fiveHour' | 'week') {
@@ -505,7 +583,7 @@ function parseGeminiRemainingText(value: string) {
 }
 
 function cleanResetText(value: string) {
-	return value.replace(/[│]/g, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+	return value.replace(/[│]/g, ' ').replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function to24Hour(hour: number, meridiem: string) {

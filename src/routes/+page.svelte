@@ -308,6 +308,18 @@
 		}, 1200);
 	}
 
+	async function clearLogs() {
+		logs = [];
+		logsCopied = false;
+
+		try {
+			const response = await fetch('/api/server/logs', { method: 'DELETE' });
+			if (!response.ok) throw new Error(`Failed to clear server logs: ${response.status}`);
+		} catch (requestError) {
+			error = requestError instanceof Error ? requestError.message : 'Failed to clear server logs.';
+		}
+	}
+
 	function formatDateTime(value: string | null) {
 		if (!value) return 'Not collected';
 		return DATE_TIME_FORMATTER.format(new Date(value));
@@ -942,9 +954,7 @@
 							class="h-6 cursor-pointer rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:shadow-none"
 							disabled={logs.length === 0}
 							title="Clear logs"
-							onclick={() => {
-								logs = [];
-							}}
+							onclick={() => void clearLogs()}
 						>
 							Clear
 						</button>
