@@ -318,6 +318,7 @@ function hasUsageOutput(providerId: ProviderId, output: string) {
 
 	if (providerId === 'gemini') {
 		return (
+			parsed.modelUsages.length >= 3 ||
 			parsed.modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
 				.length >= 3 ||
 			(/Model usage|Select Model/i.test(stripTerminalOutput(output)) &&

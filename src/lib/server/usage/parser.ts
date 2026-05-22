@@ -16,7 +16,7 @@ const TERMINAL_ESCAPE_PATTERN = /\x1b(?:[()#%][0-~]|[78=>])/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
-export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤\[\]]/g;
+export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤[\]]/g;
 export const BAR_DECORATION_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]+/g;
 
 export function stripTerminalOutput(value: string) {
@@ -196,6 +196,7 @@ function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
 		...(usageSection ? parseGeminiModelUsageSpans(usageSection) : []),
 		...parseGeminiPercentResetRows(candidateLines),
 		...parseGeminiSplitModelUsageLines(candidateLines),
+		...parseGeminiOrderedModelPercentFallback(output, candidateLines),
 		...candidateLines
 			.map(parseGeminiModelUsageLine)
 			.filter((usage): usage is ModelUsage => usage !== null)
@@ -255,7 +256,11 @@ function mergeGeminiModelUsages(usages: ModelUsage[]) {
 		}
 	}
 
-	return [...byLabel.values()];
+	return [...byLabel.values()].sort(
+		(left, right) =>
+			geminiModelSortIndex(left.label) - geminiModelSortIndex(right.label) ||
+			left.label.localeCompare(right.label)
+	);
 }
 
 function buildGeminiCandidateLines(output: string, lines: string[]) {
@@ -276,6 +281,14 @@ function buildGeminiCandidateLines(output: string, lines: string[]) {
 
 function geminiUsageCompleteness(usage: ModelUsage) {
 	return (usage.resetAt ? 2 : 0) + (usage.remainingText ? 1 : 0);
+}
+
+function geminiModelSortIndex(label: string) {
+	if (/^Flash$/i.test(label)) return 0;
+	if (/^Flash Lite$/i.test(label)) return 1;
+	if (/^Pro$/i.test(label)) return 2;
+	if (/^gemini-/i.test(label)) return 3;
+	return 4;
 }
 
 function parseGeminiModelUsageScreen(output: string): ModelUsage[] {
@@ -433,6 +446,86 @@ function parseGeminiSplitModelUsageLines(lines: string[]): ModelUsage[] {
 	}
 
 	return pairs;
+}
+
+function parseGeminiOrderedModelPercentFallback(output: string, lines: string[]): ModelUsage[] {
+	const chunks = buildGeminiOrderedFallbackChunks(output, lines);
+	const candidates: ModelUsage[][] = [];
+
+	for (const chunk of chunks) {
+		const labels = [...chunk.matchAll(GEMINI_MODEL_NAME_PATTERN)]
+			.map((match) => cleanGeminiModelLabel(match[1]))
+			.filter(isGeminiModelUsageLabel);
+		const percents = [...chunk.matchAll(/(\d+(?:\.\d+)?)\s*%/g)];
+		if (labels.length < 3 || percents.length < 3) continue;
+
+		const modelLabels = takeLastDistinctGeminiLabels(labels);
+		if (modelLabels.length < 3) continue;
+
+		const usablePercents = percents.slice(-modelLabels.length);
+		if (usablePercents.length < modelLabels.length) continue;
+
+		candidates.push(
+			modelLabels.map((label, index) => {
+				const percentMatch = usablePercents[index];
+				const resetText = resetTextAfterPercent(chunk, percentMatch);
+
+				return {
+					label,
+					percent: clampPercent(Number(percentMatch[1])) ?? 0,
+					resetAt: resetText ? parseGeminiResetAt(resetText) : null,
+					remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+				};
+			})
+		);
+	}
+
+	return candidates.at(-1) ?? [];
+}
+
+function buildGeminiOrderedFallbackChunks(output: string, lines: string[]) {
+	const stripped = stripTerminalOutput(output);
+	const flattened = normalizeGeminiUsageLine(stripped.replace(/[\r\n│┃║]+/g, ' '));
+	const chunks = [
+		extractGeminiModelUsageSection(output),
+		...stripped.split(/Model usage|Select Model/i),
+		lines.join(' '),
+		flattened
+	]
+		.filter((chunk): chunk is string => Boolean(chunk))
+		.map((chunk) => normalizeGeminiUsageLine(chunk))
+		.filter(Boolean);
+	const seen = new Set<string>();
+
+	return chunks.filter((chunk) => {
+		if (seen.has(chunk)) return false;
+		seen.add(chunk);
+		return true;
+	});
+}
+
+function takeLastDistinctGeminiLabels(labels: string[]) {
+	const result: string[] = [];
+	const seen = new Set<string>();
+
+	for (let index = labels.length - 1; index >= 0; index -= 1) {
+		const label = labels[index];
+		if (seen.has(label)) continue;
+		seen.add(label);
+		result.unshift(label);
+		if (result.length >= 4) break;
+	}
+
+	return result;
+}
+
+function resetTextAfterPercent(chunk: string, percentMatch: RegExpMatchArray) {
+	if (percentMatch.index === undefined) return null;
+
+	const afterPercent = chunk.slice(percentMatch.index + percentMatch[0].length);
+	const nextPercentIndex = afterPercent.search(/\d+(?:\.\d+)?\s*%/);
+	const span = nextPercentIndex >= 0 ? afterPercent.slice(0, nextPercentIndex) : afterPercent;
+	return span.match(/\bResets?\s*:?\s*(.+)$/i)?.[1]?.trim() ?? null;
 }
 
 function parseGeminiModelUsageLine(line: string): ModelUsage | null {
