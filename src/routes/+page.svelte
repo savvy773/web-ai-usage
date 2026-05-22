@@ -106,7 +106,11 @@
 		}
 		if (!payload) {
 			void loadUsage({ refreshAfterLoad: true });
-		} else if (!initialRefreshStarted && !isRefreshCoolingDown(refreshCooldownUntil)) {
+		} else if (
+			!initialRefreshStarted &&
+			!isRefreshCoolingDown(refreshCooldownUntil) &&
+			shouldRefreshOnMount(payload)
+		) {
 			initialRefreshStarted = true;
 			window.setTimeout(() => void refreshUsage('auto'), 250);
 		}
@@ -136,7 +140,7 @@
 
 		try {
 			applyPayload(await fetchUsagePayload('/api/usage'));
-			if (options.refreshAfterLoad && !initialRefreshStarted) {
+			if (options.refreshAfterLoad && !initialRefreshStarted && shouldRefreshOnMount(payload)) {
 				if (isRefreshCoolingDown(refreshCooldownUntil)) {
 					return;
 				}
@@ -225,6 +229,14 @@
 			localStorage.removeItem(USAGE_CACHE_KEY);
 			return null;
 		}
+	}
+
+	function shouldRefreshOnMount(nextPayload: UsagePayload | null) {
+		if (!nextPayload) return true;
+		if (!latestCollectedAt(nextPayload)) return true;
+
+		const nextRefreshAt = Date.parse(nextPayload.nextRefreshAt);
+		return Number.isFinite(nextRefreshAt) && nextRefreshAt <= Date.now();
 	}
 
 	async function fetchUsagePayload(url: string) {

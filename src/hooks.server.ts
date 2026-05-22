@@ -14,11 +14,24 @@ function captureConsole(level: LogEntry['level'], original: (...args: unknown[])
 	};
 }
 
-console.log = captureConsole('log', console.log.bind(console));
-console.warn = captureConsole('warn', console.warn.bind(console));
-console.error = captureConsole('error', console.error.bind(console));
-console.info = captureConsole('info', console.info.bind(console));
+type G = typeof globalThis & {
+	__aiConsoleCaptured?: boolean;
+	__aiServerStartedLogged?: boolean;
+};
 
-console.info('[server] Started.');
+const g = globalThis as G;
+
+if (!g.__aiConsoleCaptured) {
+	g.__aiConsoleCaptured = true;
+	console.log = captureConsole('log', console.log.bind(console));
+	console.warn = captureConsole('warn', console.warn.bind(console));
+	console.error = captureConsole('error', console.error.bind(console));
+	console.info = captureConsole('info', console.info.bind(console));
+}
+
+if (!g.__aiServerStartedLogged) {
+	g.__aiServerStartedLogged = true;
+	console.info('[server] Started.');
+}
 
 export const handle: Handle = ({ event, resolve }) => resolve(event);

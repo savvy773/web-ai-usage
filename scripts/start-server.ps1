@@ -1,6 +1,6 @@
 param(
 	[ValidateSet('dev', 'preview')]
-	[string]$Mode = 'dev',
+	[string]$Mode = 'preview',
 
 	[string]$HostName = '127.0.0.1',
 
@@ -48,6 +48,20 @@ function Get-PnpmCommand {
 	}
 
 	throw 'pnpm is required to run this project.'
+}
+
+function Get-NodeCommand {
+	$command = Get-Command node.exe -ErrorAction SilentlyContinue
+	if ($command) {
+		return $command.Source
+	}
+
+	$command = Get-Command node -ErrorAction SilentlyContinue
+	if ($command) {
+		return $command.Source
+	}
+
+	throw 'node is required to run this project.'
 }
 
 function Get-ProcessInfo {
@@ -243,6 +257,8 @@ function Remove-ServerState {
 
 function Start-DashboardServer {
 	$PnpmCommand = Get-PnpmCommand
+	$NodeCommand = Get-NodeCommand
+	$ViteBin = Join-Path $ProjectRoot 'node_modules\vite\bin\vite.js'
 
 	if (-not (Test-Path 'node_modules')) {
 		& $PnpmCommand install
@@ -262,30 +278,18 @@ function Start-DashboardServer {
 		if ($LASTEXITCODE -ne 0) {
 			return $LASTEXITCODE
 		}
-		$PnpmArgs = @('exec', 'vite', 'preview', '--host', $HostName, '--port', "$Port", '--strictPort')
+		$ViteArgs = @($ViteBin, 'preview', '--host', $HostName, '--port', "$Port", '--strictPort')
 	} else {
-		$PnpmArgs = @('exec', 'vite', 'dev', '--host', $HostName, '--port', "$Port", '--strictPort')
+		$ViteArgs = @($ViteBin, 'dev', '--host', $HostName, '--port', "$Port", '--strictPort')
 	}
 
 	if ($Open) {
-		$PnpmArgs += '--open'
+		$ViteArgs += '--open'
 	}
 
-	$serverProcess = Start-Process -FilePath $PnpmCommand -ArgumentList $PnpmArgs -WorkingDirectory $ProjectRoot -NoNewWindow -PassThru
+	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -PassThru
 	Write-ServerState -Process $serverProcess
-
-	$exitCode = 0
-	try {
-		$serverProcess.WaitForExit()
-		$exitCode = $serverProcess.ExitCode
-	} finally {
-		if (-not $serverProcess.HasExited) {
-			Stop-DashboardProcessTree -RootProcessId $serverProcess.Id -Reason 'Script interrupted'
-		}
-		Remove-ServerState -ProcessId $serverProcess.Id
-	}
-
-	return $exitCode
+	return 0
 }
 
 function Show-ServerStatus {
@@ -338,6 +342,7 @@ AI Usage Dashboard server script
 Usage:
   .\scripts\start-server.ps1
   .\scripts\start-server.ps1 -Open
+  .\scripts\start-server.ps1 -Mode dev
   .\scripts\start-server.ps1 -Mode preview
   .\scripts\start-server.ps1 -Port 5173
   .\scripts\start-server.ps1 -NoRestart
@@ -367,7 +372,7 @@ How to check in Task Manager:
 
 Manual stop:
   Preferred:
-    Press Ctrl+C in the terminal that is running this script.
+    Use the stop button in the dashboard.
 
   Restart safely:
     Run this script again. It will stop only the tracked $ServerName server and start it again.
