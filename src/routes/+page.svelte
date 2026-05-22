@@ -4,6 +4,7 @@
 		Activity,
 		AlertTriangle,
 		Clock3,
+		Copy,
 		ExternalLink,
 		Power,
 		RefreshCcw,
@@ -64,6 +65,7 @@
 	let logs = $state<LogEntry[]>([]);
 	let logContainer = $state<HTMLElement | null>(null);
 	let autoScrollLogs = $state(true);
+	let logsCopied = $state(false);
 
 	$effect(() => {
 		if (logs.length > 0 && logContainer && autoScrollLogs && showLogs) {
@@ -281,6 +283,17 @@
 		return new Promise<void>((resolve) => {
 			window.setTimeout(resolve, ms);
 		});
+	}
+
+	async function copyLogs() {
+		const text = logs
+			.map((entry) => `${formatLogTime(entry.timestamp)} [${entry.level}] ${entry.message}`)
+			.join('\n');
+		await navigator.clipboard.writeText(text);
+		logsCopied = true;
+		window.setTimeout(() => {
+			logsCopied = false;
+		}, 1200);
 	}
 
 	function formatDateTime(value: string | null) {
@@ -890,14 +903,33 @@
 						<span>Server Logs</span>
 						<span class="rounded bg-muted px-1.5 py-0.5 font-mono tabular-nums">{logs.length}</span>
 					</div>
-					<div class="flex items-center gap-3">
-						<label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-							<input type="checkbox" bind:checked={autoScrollLogs} class="size-3 accent-cyan-400" />
-							Auto scroll
+					<div class="flex items-center gap-1.5">
+						<label
+							class="flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm"
+							title="Auto scroll logs"
+						>
+							<input
+								type="checkbox"
+								bind:checked={autoScrollLogs}
+								class="size-2.5 accent-cyan-400"
+							/>
+							Auto
 						</label>
 						<button
 							type="button"
-							class="text-xs text-muted-foreground hover:text-foreground"
+							class="flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:shadow-none"
+							disabled={logs.length === 0}
+							title="Copy logs"
+							onclick={() => void copyLogs()}
+						>
+							<Copy class="size-3" />
+							{logsCopied ? 'Copied' : 'Copy'}
+						</button>
+						<button
+							type="button"
+							class="h-6 cursor-pointer rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:shadow-none"
+							disabled={logs.length === 0}
+							title="Clear logs"
 							onclick={() => {
 								logs = [];
 							}}

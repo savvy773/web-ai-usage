@@ -8,6 +8,7 @@ const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
 const MAX_COLLECTION_ATTEMPTS = 2;
 const COLLECTION_RETRY_DELAY_MS = 1500;
+const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 
 export async function collectAllUsage(): Promise<ProviderUsage[]> {
 	const results: ProviderUsage[] = [];
@@ -27,8 +28,9 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	let latestResult: ProviderUsage | null = null;
 
 	for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
+		let output = '';
 		try {
-			const output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
+			output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
 			latestResult = parseProviderUsage(provider.id, output);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown collection error';
@@ -36,15 +38,25 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		}
 
 		if (latestResult.status === 'ok') {
+			if (attempt > 1) {
+				console.info(
+					`[collector] ${provider.name} recovered on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS} in ${formatDuration(performance.now() - startedAt)}.`
+				);
+			}
 			return withCollectionDuration(latestResult, startedAt);
 		}
 
-		console.warn(
-			`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}`
-		);
+		const details = describeCollectionResult(provider.id, output, latestResult);
 
 		if (attempt < MAX_COLLECTION_ATTEMPTS) {
+			console.info(
+				`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(COLLECTION_RETRY_DELAY_MS)}. ${details}`
+			);
 			await delay(COLLECTION_RETRY_DELAY_MS);
+		} else {
+			console.warn(
+				`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}. ${details}`
+			);
 		}
 	}
 
@@ -62,7 +74,11 @@ function withCollectionDuration(provider: ProviderUsage, startedAt: number): Pro
 async function runSlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
 	try {
 		return await runPtySlashCommand(providerId, command, slashCommand);
-	} catch {
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Unknown node-pty error';
+		console.info(
+			`[collector] ${providerId} node-pty path failed; trying pipe fallback. ${message}`
+		);
 		return await runPipeSlashCommand(providerId, command, slashCommand);
 	}
 }
@@ -303,6 +319,55 @@ function hasCodexLimitLines(output: string) {
 function appendCapturedOutput(output: string, chunk: string) {
 	const nextOutput = output + chunk;
 	return nextOutput.length > MAX_CAPTURE_CHARS ? nextOutput.slice(-MAX_CAPTURE_CHARS) : nextOutput;
+}
+
+function describeCollectionResult(
+	providerId: ProviderId,
+	rawOutput: string,
+	result: ProviderUsage
+) {
+	const output = stripTerminalOutput(rawOutput);
+	const lines = output
+		.split('\n')
+		.map((line) => line.trim())
+		.filter(Boolean);
+	const markers = usageMarkers(providerId, lines);
+	const detail = [
+		`output=${output.length} chars/${lines.length} lines`,
+		`markers=${markers.length > 0 ? markers.join(',') : 'none'}`
+	];
+
+	if (DEBUG_COLLECTOR_LOGS && result.rawPreview) {
+		detail.push(`tail=${JSON.stringify(result.rawPreview.slice(-500))}`);
+	}
+
+	return `(${detail.join('; ')})`;
+}
+
+function usageMarkers(providerId: ProviderId, lines: string[]) {
+	if (providerId === 'codex') {
+		return [
+			lines.some((line) => /(?:^|[│\s])5h\s+limit\s*:/i.test(line)) ? '5h-limit' : null,
+			lines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line)) ? 'week-limit' : null
+		].filter((marker): marker is string => marker !== null);
+	}
+
+	if (providerId === 'gemini') {
+		return [
+			lines.some((line) => /model usage|select model/i.test(line)) ? 'model-screen' : null,
+			lines.some((line) => /\b(?:flash|pro)\b/i.test(line)) ? 'model-name' : null,
+			lines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null
+		].filter((marker): marker is string => marker !== null);
+	}
+
+	return [
+		lines.some((line) => /\busage\b/i.test(line)) ? 'usage-word' : null,
+		lines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null
+	].filter((marker): marker is string => marker !== null);
+}
+
+function formatDuration(ms: number) {
+	return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function delay(ms: number) {
