@@ -5,7 +5,7 @@ export const CLI_COLLECTION_CONFIG = {
 	captureTimeoutMs: 45_000,
 	providerCaptureTimeoutMs: {
 		codex: 60_000,
-		gemini: 90_000
+		gemini: 105_000
 	},
 	shell: {
 		command: 'pwsh.exe',

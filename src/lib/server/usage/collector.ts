@@ -6,7 +6,7 @@ type PtyModule = typeof import('node-pty');
 
 const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
-const MAX_COLLECTION_ATTEMPTS = 2;
+const MAX_COLLECTION_ATTEMPTS = 3;
 const COLLECTION_RETRY_DELAY_MS = 1500;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 
@@ -356,7 +356,8 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 		return [
 			lines.some((line) => /model usage|select model/i.test(line)) ? 'model-screen' : null,
 			lines.some((line) => /\b(?:flash|pro)\b/i.test(line)) ? 'model-name' : null,
-			lines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null
+			lines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null,
+			lines.some((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line)) ? 'percent-reset' : null
 		].filter((marker): marker is string => marker !== null);
 	}
 
