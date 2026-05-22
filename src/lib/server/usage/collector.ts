@@ -5,6 +5,7 @@ import {
 	parseProviderUsage,
 	stripTerminalOutput
 } from './parser';
+import { writeCollectorDebugSnapshot } from './debug-files';
 import { CLI_COLLECTION_CONFIG, PROVIDERS, type ProviderId, type ProviderUsage } from '$lib/usage';
 
 type PtyModule = typeof import('node-pty');
@@ -14,6 +15,7 @@ const MAX_CAPTURE_CHARS = 20_000;
 const MAX_COLLECTION_ATTEMPTS = 3;
 const COLLECTION_RETRY_DELAY_MS = 1500;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
+const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 
 export async function collectAllUsage(): Promise<ProviderUsage[]> {
 	const results: ProviderUsage[] = [];
@@ -41,6 +43,8 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 			const message = error instanceof Error ? error.message : 'Unknown collection error';
 			latestResult = parseProviderUsage(provider.id, '', message);
 		}
+
+		await writeCollectorDebugSnapshot(provider.id, output, latestResult).catch(() => undefined);
 
 		if (latestResult.status === 'ok') {
 			if (attempt > 1) {
@@ -326,7 +330,20 @@ function hasUsageOutput(providerId: ProviderId, output: string) {
 		);
 	}
 
+	if (providerId === 'claude') {
+		return (
+			parsed.windows.fiveHour.percent !== null &&
+			parsed.windows.week.percent !== null &&
+			hasResetText(parsed.windows.fiveHour) &&
+			hasResetText(parsed.windows.week)
+		);
+	}
+
 	return parsed.status === 'ok';
+}
+
+function hasResetText(window: ProviderUsage['windows']['fiveHour']) {
+	return window.resetAt !== null || window.remainingText !== null;
 }
 
 function appendCapturedOutput(output: string, chunk: string) {
@@ -349,12 +366,44 @@ function describeCollectionResult(
 		`output=${output.length} chars/${lines.length} lines`,
 		`markers=${markers.length > 0 ? markers.join(',') : 'none'}`
 	];
+	detail.push(...parseDiagnostics(providerId, markers, result));
 
 	if (DEBUG_COLLECTOR_LOGS && result.rawPreview) {
 		detail.push(`tail=${JSON.stringify(result.rawPreview.slice(-500))}`);
 	}
 
 	return `(${detail.join('; ')})`;
+}
+
+function parseDiagnostics(providerId: ProviderId, markers: string[], result: ProviderUsage) {
+	if (providerId !== 'gemini') return [];
+
+	const parsedLabels = result.modelUsages.map((usage) => usage.label);
+	const detail = [`parsed-models=${result.modelUsages.length}/3`];
+	if (parsedLabels.length > 0) {
+		detail.push(`parsed-labels=${parsedLabels.join('|')}`);
+	}
+	if (result.status === 'ok') return detail;
+
+	const missing = [];
+	if (!markers.includes('model-screen')) missing.push('model-screen');
+	if (!markers.includes('model-name')) missing.push('model-name');
+	if (!markers.includes('bar-row')) missing.push('bar-row');
+	if (!markers.includes('percent')) missing.push('percent');
+	if (!markers.includes('reset-word')) missing.push('reset-word');
+	if (
+		markers.includes('percent') &&
+		markers.includes('reset-word') &&
+		!markers.includes('percent-reset')
+	) {
+		missing.push('percent-reset-same-row');
+	}
+	if (result.modelUsages.length < 3) missing.push('3 model rows');
+
+	return [
+		...detail,
+		`parse-failure=${missing.length > 0 ? `missing ${missing.join(',')}` : 'parsed output did not meet ok criteria'}`
+	];
 }
 
 function usageMarkers(providerId: ProviderId, lines: string[]) {
@@ -375,7 +424,9 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 				? 'model-screen'
 				: null,
 			normalizedLines.some((line) => /\b(?:flash|pro)\b/i.test(line)) ? 'model-name' : null,
+			lines.some((line) => GEMINI_BAR_RUN_PATTERN.test(line)) ? 'bar-row' : null,
 			normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null,
+			normalizedLines.some((line) => /\bResets?\s*:/i.test(line)) ? 'reset-word' : null,
 			normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line))
 				? 'percent-reset'
 				: null

@@ -16,6 +16,7 @@ const TERMINAL_ESCAPE_PATTERN = /\x1b(?:[()#%][0-~]|[78=>])/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
+const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤[\]]/g;
 export const BAR_DECORATION_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]+/g;
 
@@ -183,14 +184,20 @@ function applyCodexLimitLine(window: UsageWindow, line: string) {
 
 function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
 	const usageSection = extractGeminiModelUsageSection(output);
+	const barUsages = parseGeminiBarModelRows(output);
+	if (barUsages.length >= 3) {
+		return mergeGeminiModelUsages(barUsages);
+	}
+
 	const sectionLines = extractGeminiModelUsageSectionLines(output);
 	const sectionUsages = parseGeminiPercentResetRows(sectionLines);
 	if (sectionUsages.length >= 3) {
-		return mergeGeminiModelUsages(sectionUsages);
+		return mergeGeminiModelUsages([...barUsages, ...sectionUsages]);
 	}
 
 	const candidateLines = buildGeminiCandidateLines(output, lines);
 	const usages = [
+		...barUsages,
 		...parseGeminiKnownModelRows(output, candidateLines),
 		...parseGeminiModelUsageScreen(output),
 		...(usageSection ? parseGeminiModelUsageSpans(usageSection) : []),
@@ -332,6 +339,75 @@ function parseGeminiModelUsageSpans(section: string): ModelUsage[] {
 	}
 
 	return usages;
+}
+
+function parseGeminiBarModelRows(output: string): ModelUsage[] {
+	const usages: ModelUsage[] = [];
+	const seen = new Set<string>();
+
+	for (const row of buildGeminiBarModelRows(output)) {
+		const barMatch = row.match(GEMINI_BAR_RUN_PATTERN);
+		if (!barMatch || barMatch.index === undefined) continue;
+
+		const label = cleanGeminiModelLabel(row.slice(0, barMatch.index));
+		if (!isGeminiModelUsageLabel(label)) continue;
+
+		const value = row.slice(barMatch.index + barMatch[0].length);
+		const usage = parseGeminiUsageAfterLabel(label, normalizeGeminiUsageLine(value));
+		if (!usage) continue;
+
+		const key = `${usage.label}\0${usage.percent}\0${usage.remainingText ?? ''}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		usages.push(usage);
+	}
+
+	return usages;
+}
+
+function buildGeminiBarModelRows(output: string) {
+	const texts = [extractGeminiModelUsageSection(output), stripTerminalOutput(output)].filter(
+		(text): text is string => Boolean(text)
+	);
+	const rows: string[] = [];
+	const seen = new Set<string>();
+
+	for (const text of texts) {
+		const rawLines = text
+			.replace(/[│┃║]/g, '\n')
+			.split('\n')
+			.map((line) => line.trim())
+			.filter(Boolean);
+
+		for (let index = 0; index < rawLines.length; index += 1) {
+			const line = rawLines[index];
+			if (!GEMINI_BAR_RUN_PATTERN.test(line)) continue;
+
+			const nextLine = rawLines[index + 1] ?? '';
+			const lineHasPercent = /\d+(?:\.\d+)?\s*%/.test(line);
+			const nextLineStartsWithPercent = /^\s*\d+(?:\.\d+)?\s*%/i.test(
+				normalizeGeminiUsageLine(nextLine)
+			);
+			let row = line;
+
+			if (!lineHasPercent && nextLineStartsWithPercent) {
+				row = `${row} ${nextLine}`;
+			}
+
+			const rowHasReset = /\bResets?\s*:?\s*/i.test(row);
+			const followingLine = rawLines[index + (row === line ? 1 : 2)] ?? '';
+			if (!rowHasReset && /\bResets?\s*:?\s*/i.test(followingLine)) {
+				row = `${row} ${followingLine}`;
+			}
+
+			const normalized = row.replace(/\s+/g, ' ').trim();
+			if (seen.has(normalized)) continue;
+			seen.add(normalized);
+			rows.push(normalized);
+		}
+	}
+
+	return rows;
 }
 
 function parseGeminiKnownModelRows(output: string, lines: string[]): ModelUsage[] {

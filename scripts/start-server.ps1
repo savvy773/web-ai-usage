@@ -33,6 +33,10 @@ $ServerName = 'ai-usage-dashboard'
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $RuntimeDir = Join-Path $ProjectRoot '.server'
 $StatePath = Join-Path $RuntimeDir "$ServerName.json"
+$DataDir = Join-Path $ProjectRoot 'data'
+$LogsDir = Join-Path $DataDir 'logs'
+$ProcessLogPath = Join-Path $LogsDir 'server-process.log'
+$StartupErrorLogPath = Join-Path $LogsDir 'server-startup-error.log'
 
 Set-Location $ProjectRoot
 
@@ -287,7 +291,9 @@ function Start-DashboardServer {
 		$ViteArgs += '--open'
 	}
 
-	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -PassThru
+	New-Item -ItemType Directory -Force $LogsDir | Out-Null
+
+	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ProcessLogPath -RedirectStandardError $StartupErrorLogPath -PassThru
 	Write-ServerState -Process $serverProcess
 	return 0
 }

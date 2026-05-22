@@ -84,9 +84,20 @@ CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architec
 
 ## 데이터
 
-- 저장 파일: `data/usage-history.json`
+- usage history: `data/usage-history.json`
+- 화면 확인용 최신 payload: `data/usage-latest.json`
+- CLI raw tail: `data/raw/{provider}-latest.txt`
+- 파싱 결과 snapshot: `data/raw/{provider}-latest.parsed.json`
+- 서버 상태 파일: `.server/ai-usage-dashboard.json`
+- 서버 로그: `data/logs/server.log`
+- 오류 로그: `data/logs/server-error.log`, `data/logs/server-startup-error.log`
+- collector 로그: `data/logs/collector.log`
 - history bucket: 10분 단위
 - 보관 개수: 최근 12개 bucket, 최소 5개 이상
 - 브라우저 캐시 key: `ai-usage-payload-cache`
 
-`data/usage-history.json`은 로컬 실행 결과이므로 Git에 올릴지 여부를 별도로 판단하세요.
+`data/usage-history.json`이 기능 동작 확인의 기준 파일입니다. refresh가 성공하면 이 파일의 최신 `history[].providers`에 provider별 `status`, `message`, `windows`, `modelUsages`가 저장됩니다. Gemini는 `modelUsages[]`의 `label`, `percent`, `resetAt`, `remainingText`를 보면 됩니다.
+
+파싱 오류 확인은 `data/raw/gemini-latest.txt` 또는 `data/raw/claude-latest.txt`처럼 provider별 raw tail을 먼저 봅니다. 화면에 뿌릴 최신 데이터와 최근 6개 bucket은 `data/usage-latest.json`에서 바로 확인할 수 있습니다.
+
+`data/`와 `.server/`는 Git ignore 대상입니다. `rawPreview` 같은 raw terminal output은 history JSON에 저장하지 않고 `data/raw/`에 최신 tail만 별도 저장합니다.

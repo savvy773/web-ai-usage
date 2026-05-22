@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { DATA_DIR, USAGE_HISTORY_PATH, USAGE_LATEST_PATH } from '$lib/server/file-paths';
 import {
 	createEmptyWindow,
 	createUnavailableUsage,
@@ -11,11 +12,10 @@ import {
 	type UsagePayload
 } from '$lib/usage';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const HISTORY_PATH = path.join(DATA_DIR, 'usage-history.json');
 const BUCKET_MS = 10 * 60 * 1000;
 const MAX_BUCKETS = 12;
 const MIN_BUCKETS = 5;
+const LATEST_BUCKETS = 6;
 
 type HistoryFile = {
 	history: StoredUsageBucket[];
@@ -84,7 +84,9 @@ export async function recordUsageSnapshot(providers: ProviderUsage[]): Promise<U
 		.map(compactBucket);
 
 	await writeHistory(trimmed);
-	return buildPayload(trimmed);
+	const payload = buildPayload(trimmed);
+	await writeLatestPayload(payload);
+	return payload;
 }
 
 function compactProviderUsage(provider: ProviderUsage): ProviderUsage {
@@ -95,9 +97,11 @@ function compactProviderUsage(provider: ProviderUsage): ProviderUsage {
 }
 
 function resolveProviderSnapshot(provider: ProviderUsage, history: UsageBucket[]): ProviderUsage {
-	if (provider.status === 'ok') return provider;
-
 	const previous = findLatestUsableProvider(history, provider.provider);
+	if (provider.status === 'ok') {
+		return previous ? fillMissingWindowResets(provider, previous) : provider;
+	}
+
 	if (!previous) return provider;
 
 	console.warn(
@@ -111,6 +115,35 @@ function resolveProviderSnapshot(provider: ProviderUsage, history: UsageBucket[]
 		collectionDurationMs: provider.collectionDurationMs,
 		rawPreview: provider.rawPreview
 	};
+}
+
+function fillMissingWindowResets(provider: ProviderUsage, previous: ProviderUsage): ProviderUsage {
+	return {
+		...provider,
+		windows: {
+			fiveHour: fillMissingWindowReset(provider.windows.fiveHour, previous.windows.fiveHour),
+			week: fillMissingWindowReset(provider.windows.week, previous.windows.week)
+		}
+	};
+}
+
+function fillMissingWindowReset(
+	window: ProviderUsage['windows']['fiveHour'],
+	previous: ProviderUsage['windows']['fiveHour']
+): ProviderUsage['windows']['fiveHour'] {
+	if (window.resetAt || window.percent === null || !isFutureReset(previous.resetAt)) return window;
+
+	return {
+		...window,
+		resetAt: previous.resetAt,
+		remainingText: window.remainingText ?? previous.remainingText
+	};
+}
+
+function isFutureReset(value: string | null) {
+	if (!value) return false;
+	const resetTime = Date.parse(value);
+	return Number.isFinite(resetTime) && resetTime > Date.now();
 }
 
 function findLatestUsableProvider(
@@ -148,7 +181,7 @@ function compactBucket(bucket: UsageBucket): UsageBucket {
 
 async function readHistory(): Promise<UsageBucket[]> {
 	try {
-		const content = await readFile(HISTORY_PATH, 'utf8');
+		const content = await readFile(USAGE_HISTORY_PATH, 'utf8');
 		const parsed = JSON.parse(content) as HistoryFile;
 		return Array.isArray(parsed.history) ? parsed.history.map(inflateBucket) : [];
 	} catch (error) {
@@ -166,7 +199,24 @@ async function writeHistory(history: UsageBucket[]) {
 			`${JSON.stringify({ history: history.map(toStoredBucket) }, null, 2)}\n`,
 			'utf8'
 		);
-		await rename(tempPath, HISTORY_PATH);
+		await rename(tempPath, USAGE_HISTORY_PATH);
+	} catch (error) {
+		await unlink(tempPath).catch(() => undefined);
+		throw error;
+	}
+}
+
+async function writeLatestPayload(payload: UsagePayload) {
+	await mkdir(DATA_DIR, { recursive: true });
+	const tempPath = path.join(DATA_DIR, `usage-latest.${process.pid}.${Date.now()}.tmp`);
+	const latestPayload: UsagePayload = {
+		...payload,
+		history: payload.history.slice(-LATEST_BUCKETS)
+	};
+
+	try {
+		await writeFile(tempPath, `${JSON.stringify(latestPayload, null, 2)}\n`, 'utf8');
+		await rename(tempPath, USAGE_LATEST_PATH);
 	} catch (error) {
 		await unlink(tempPath).catch(() => undefined);
 		throw error;

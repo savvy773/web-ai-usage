@@ -185,8 +185,8 @@ ready 감지:
 완료 판단:
 
 - Codex: `fiveHour.percent`와 `week.percent`가 모두 파싱되면 usage 출력으로 인정합니다.
+- Claude: `fiveHour/week` percent와 reset text가 모두 파싱되면 usage 출력으로 인정합니다. percent만 먼저 들어온 redraw를 너무 일찍 저장하면 Reset이 `Unknown`으로 보일 수 있기 때문입니다.
 - Gemini: reset/remaining이 있는 모델 row가 3개 이상이면 인정합니다. 또는 `Model usage`/`Select Model` 화면이 보이고 모델 row가 3개 이상 파싱되면 인정합니다.
-- Claude: parser status가 `ok`이면 인정합니다.
 - output이 감지된 뒤 바로 끝내지 않고 settle delay를 둡니다. 기본 1.2초, Gemini는 3초입니다.
 
 `node-pty` 실행이 실패하면 일반 child process pipe 방식으로 fallback합니다.
@@ -368,13 +368,41 @@ Pace card:
 
 ## Cache와 History
 
-서버 캐시:
+운영 중 확인할 파일:
 
-- 파일: `data/usage-history.json`
+- `data/usage-history.json`: usage history의 영구 저장 파일입니다. dashboard가 실제로 읽고 쓰는 핵심 JSON입니다.
+- `data/usage-latest.json`: 화면/API payload 형태를 그대로 저장하되 `history`는 최근 6개 bucket만 포함합니다. UI에 뿌려지는 데이터 확인용 파일입니다.
+- `data/raw/{provider}-latest.txt`: provider별 마지막 CLI raw output tail입니다. 파싱 오류가 나면 이 파일에서 실제 TUI 출력이 어떻게 들어왔는지 먼저 확인합니다.
+- `data/raw/{provider}-latest.parsed.json`: raw tail과 함께 저장되는 provider별 파싱 결과 snapshot입니다. `status`, `message`, `windows`, `modelUsages`, `rawOutputChars`를 확인합니다.
+- `data/logs/server.log`: 서버 console log 전체를 append합니다.
+- `data/logs/server-error.log`: `warn`/`error` level만 append합니다.
+- `data/logs/collector.log`: `[collector]` prefix가 붙은 CLI 수집/파싱 진단 로그만 append합니다.
+- `data/logs/server-process.log`: `start-server.ps1`로 시작한 Node/Vite process stdout입니다.
+- `data/logs/server-startup-error.log`: `start-server.ps1`로 시작한 Node/Vite process stderr입니다. 서버 구동 중 낮은 레벨 오류를 확인할 때 봅니다.
+- `.server/ai-usage-dashboard.json`: `scripts/start-server.ps1`이 관리하는 실행 상태 파일입니다. port, host, mode, root PID, process creation date를 저장해 재시작 시 같은 dashboard 서버인지 확인합니다.
+- 화면 하단 Logs 패널: `src/hooks.server.ts`가 `console.log/info/warn/error`를 가로채 현재 Node 프로세스의 in-memory buffer에도 복사합니다. `GET /api/server/logs` SSE가 이 buffer를 읽습니다. 프로세스를 재시작하면 화면용 buffer는 사라지지만 `data/logs/*.log` 파일은 남습니다.
+
+`data/usage-history.json`:
+
 - bucket 단위: 10분
 - 보관: 최근 12개 bucket, 최소 5개 이상
 - 같은 bucket 안에서 다시 수집하면 기존 bucket을 갱신합니다.
-- 파일 쓰기는 임시 파일 작성 후 rename하는 방식으로 처리합니다.
+- 파일 쓰기는 `data/usage-history.<pid>.<timestamp>.tmp` 임시 파일 작성 후 `usage-history.json`으로 rename하는 방식으로 처리합니다.
+- 기능 동작 확인은 이 파일의 최신 `history[]` bucket을 보면 됩니다.
+
+`data/usage-latest.json`:
+
+- `/api/usage`가 반환하는 `UsagePayload`와 같은 형태입니다.
+- `providers[]`는 화면 상단 카드가 쓰는 최신 provider 데이터입니다.
+- `history[]`는 관리 편의를 위해 최근 6개 bucket만 포함합니다.
+- refresh가 성공해 `recordUsageSnapshot`이 실행될 때 함께 갱신됩니다.
+
+`data/raw/`:
+
+- 각 collector attempt 뒤에 `{provider}-latest.txt`와 `{provider}-latest.parsed.json`을 덮어씁니다.
+- `*-latest.txt`는 terminal escape가 제거되지 않은 raw tail입니다. TUI redraw, `\r`, box/bar 문자가 실제로 어떻게 들어왔는지 확인할 때 씁니다.
+- `*-latest.parsed.json`은 같은 attempt에서 parser가 만든 결과입니다. raw와 파싱 결과를 나란히 비교할 수 있습니다.
+- raw 파일은 민감할 수 있으므로 Git에 올리지 않습니다.
 
 저장 시 주의점:
 
@@ -382,6 +410,7 @@ Pace card:
 - 새 refresh에서 provider가 `ok`가 아니어도, 이전 history에 usable data가 있으면 이전 값을 유지합니다.
 - 이때 status/message는 최신 실패 상태를 반영하되, 실제 usage 값은 마지막 usable snapshot을 사용합니다.
 - usable data 기준은 modelUsages가 있거나, fiveHour/week에 percent 또는 used 값이 있는 경우입니다.
+- provider가 `ok`여도 특정 window의 reset만 누락되면, 이전 snapshot의 future resetAt을 재사용합니다. Claude처럼 redraw 중 percent가 reset보다 먼저 들어오는 경우 Reset `Unknown` 표시를 줄이기 위한 보정입니다.
 
 저장 JSON의 형태:
 
@@ -445,6 +474,15 @@ Pace card:
 	]
 }
 ```
+
+JSON 확인 포인트:
+
+- 최상위는 `{ "history": [...] }`입니다.
+- 최신 bucket은 보통 `history` 배열의 마지막 항목입니다.
+- 각 bucket의 `providers.claude`, `providers.codex`, `providers.gemini`가 수집 결과입니다.
+- Claude/Codex는 `windows.fiveHour`, `windows.week`의 `percent`, `resetAt`, `remainingText`를 봅니다.
+- Gemini는 `modelUsages[]`의 `label`, `percent`, `resetAt`, `remainingText`를 봅니다.
+- `status`가 `partial` 또는 `unavailable`인데 값이 남아 있으면, 최신 refresh는 실패했지만 storage가 마지막 usable snapshot을 유지한 상태입니다. 이 경우 `message`에 최신 실패 이유가 들어갑니다.
 
 브라우저 캐시:
 
@@ -537,8 +575,12 @@ event payload:
 
 collector 로그의 marker 의미:
 
-- Gemini `markers=model-screen,model-name,percent`: usage 화면과 값 후보는 보이지만 reset row까지 완성되지 않았을 수 있습니다. parser fallback으로 modelUsages가 3개 이상 나오면 `ok`가 될 수 있습니다.
-- Gemini `markers=model-name,percent`: section 경계가 깨졌거나 redraw 중간일 가능성이 큽니다. 이 경우 `\r` 처리와 마지막 redraw 선택 로직이 핵심입니다.
+- Gemini `markers=model-screen,model-name,bar-row,percent,reset-word,percent-reset`: usage 화면, 모델명, bar row, percent, reset text가 모두 보입니다. 이 상태에서 실패하면 parser row 결합이나 label 정규화 문제를 먼저 봅니다.
+- Gemini `markers=model-name,bar-row,percent`: 모델명과 bar/percent는 보이지만 reset text가 같은 row로 복구되지 않았을 수 있습니다.
+- Gemini `markers=model-name,percent`: section 경계가 깨졌거나 redraw 중간일 가능성이 큽니다. 이 경우 `\r` 처리, bar row parser, 마지막 redraw 선택 로직이 핵심입니다.
+- Gemini `parsed-models=1/3`: parser가 인정한 모델 row 수입니다. Gemini provider는 모델 usage가 3개 이상이어야 `ok`가 될 수 있습니다.
+- Gemini `parsed-labels=Flash|Flash Lite|Pro`: parser가 회수한 모델 label 목록입니다.
+- Gemini `parse-failure=missing ...`: 실패 원인 후보입니다. 예를 들어 `missing percent-reset-same-row,3 model rows`는 percent/reset 조합이 완성되지 않았거나 모델 row가 3개 미만이라는 뜻입니다.
 - Codex `markers=5h-limit,week-limit`: 두 limit row가 모두 보입니다. 두 row에서 percent가 파싱되어야 `ok`입니다.
 - Claude `markers=usage-word,percent`: usage 관련 문구와 percent는 보입니다. current/week section 매칭을 확인해야 합니다.
 
