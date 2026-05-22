@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>AI Usage Dashboard Notes</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				font-family:
+					Geist,
+					Inter,
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				background: #101418;
+				color: #e5edf3;
+			}
+
+			body {
+				margin: 0;
+				padding: 40px 18px;
+			}
+
+			main {
+				max-width: 920px;
+				margin: 0 auto;
+			}
+
+			h1,
+			h2 {
+				letter-spacing: 0;
+			}
+
+			h1 {
+				margin: 0 0 12px;
+				font-size: 32px;
+			}
+
+			h2 {
+				margin: 34px 0 12px;
+				font-size: 20px;
+			}
+
+			p,
+			li {
+				line-height: 1.7;
+				color: #b8c5cf;
+			}
+
+			code {
+				border-radius: 4px;
+				background: #1b242c;
+				padding: 2px 5px;
+				color: #d7f3ff;
+			}
+
+			.panel {
+				border: 1px solid #2b3944;
+				border-radius: 8px;
+				background: #151c22;
+				padding: 18px;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>AI Usage Dashboard</h1>
+			<p>
+				로컬 Claude, Codex, Gemini CLI 사용량을 SvelteKit 서버에서 수집하고 JSON으로 저장한 뒤
+				브라우저 화면에 렌더링하는 대시보드입니다.
+			</p>
+
+			<section class="panel">
+				<h2>데이터 흐름</h2>
+				<ol>
+					<li>서버가 CLI를 <code>node-pty</code> 가상 터미널에서 실행합니다.</li>
+					<li>
+						Claude <code>/usage</code>, Codex <code>/status</code>, Gemini
+						<code>/model</code> 출력을 수집합니다.
+					</li>
+					<li>parser가 TUI escape, carriage return, 그래프 문자를 정규화합니다.</li>
+					<li>정규화된 usage는 <code>data/usage-history.json</code>에 저장됩니다.</li>
+					<li>
+						<code>/api/usage</code>가 JSON payload를 반환하고 Svelte 화면이 이를 렌더링합니다.
+					</li>
+				</ol>
+			</section>
+
+			<h2>파싱 안정화</h2>
+			<ul>
+				<li><code>\r\n</code>은 줄바꿈으로 유지하고 단독 <code>\r</code>은 공백으로 처리합니다.</li>
+				<li>
+					Gemini는 퍼센트 값이 채워진 마지막 <code>Model usage</code> redraw 화면을 우선합니다.
+				</li>
+				<li>box, bracket, block/bar 그래프 문자는 공통 정규식으로 제거합니다.</li>
+				<li>
+					Codex의 <code>92% left</code> 같은 표현은 dashboard 기준인 used percent로 변환합니다.
+				</li>
+			</ul>
+
+			<h2>운영 메모</h2>
+			<p>
+				자세한 구현 구조와 API contract는 <code>docs/architecture.md</code>를 기준 문서로
+				관리합니다. 이 HTML은 브라우저에서 빠르게 열어보는 요약 문서입니다.
+			</p>
+		</main>
+	</body>
+</html>

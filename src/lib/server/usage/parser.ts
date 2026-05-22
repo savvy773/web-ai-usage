@@ -12,14 +12,21 @@ const OSC_PATTERN = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
 // eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // eslint-disable-next-line no-control-regex
+const TERMINAL_ESCAPE_PATTERN = /\x1b(?:[()#%][0-~]|[78=>])/g;
+// eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
+export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤\[\]]/g;
+export const BAR_DECORATION_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]+/g;
 
 export function stripTerminalOutput(value: string) {
 	return value
 		.replace(OSC_PATTERN, '')
 		.replace(ANSI_PATTERN, '')
+		.replace(TERMINAL_ESCAPE_PATTERN, '')
 		.replace(CONTROL_PATTERN, '')
-		.replace(/\r/g, '\n');
+		.replace(/\r\n/g, '\n')
+		.replace(/\r/g, ' ');
 }
 
 function normalizeProviderUsageLine(providerId: ProviderId, line: string) {
@@ -31,8 +38,8 @@ function normalizeProviderUsageLine(providerId: ProviderId, line: string) {
 
 function normalizeDecoratedUsageLine(line: string) {
 	return line
-		.replace(/[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤]/g, ' ')
-		.replace(/[▬━─═╌╍▔▁█▌▐░▒▓■□▱▰▯▮▭]+/g, ' ')
+		.replace(BOX_DECORATION_PATTERN, ' ')
+		.replace(BAR_DECORATION_PATTERN, ' ')
 		.replace(/\s+/g, ' ')
 		.trim();
 }
@@ -122,7 +129,7 @@ function parseWindow(lines: string[], windowId: 'fiveHour' | 'week'): UsageWindo
 
 	const targetLines = candidates.length > 0 ? candidates : lines;
 	for (const line of targetLines) {
-		const percent = parsePercent(line);
+		const percent = parseUsagePercent(line);
 		if (window.percent === null && percent !== null) {
 			window.percent = percent;
 		}
@@ -154,13 +161,13 @@ function findCodexLimitLine(lines: string[], windowId: 'fiveHour' | 'week') {
 		windowId === 'fiveHour'
 			? /(?:^|[│\s])5h\s+limit\s*:/i
 			: /(?:^|[│\s])(weekly|week)\s+limit\s*:/i;
-	return lines.find((line) => pattern.test(line)) ?? null;
+	return findLastMatchingLine(lines, pattern);
 }
 
 function applyCodexLimitLine(window: UsageWindow, line: string) {
-	const percent = parsePercent(line);
+	const percent = parseUsagePercent(line);
 	if (percent !== null) {
-		window.percent = /\bleft\b/i.test(line) ? clampPercent(100 - percent) : percent;
+		window.percent = percent;
 	}
 
 	const resetAt = parseResetAt(line);
@@ -184,6 +191,7 @@ function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
 
 	const candidateLines = buildGeminiCandidateLines(output, lines);
 	const usages = [
+		...parseGeminiKnownModelRows(output, candidateLines),
 		...parseGeminiModelUsageScreen(output),
 		...(usageSection ? parseGeminiModelUsageSpans(usageSection) : []),
 		...parseGeminiPercentResetRows(candidateLines),
@@ -197,11 +205,30 @@ function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
 }
 
 function extractGeminiModelUsageSection(output: string) {
-	return (
-		stripTerminalOutput(output).match(
-			/Model usage([\s\S]*?)(?:\(\s*Press Esc\s+to\s+close\s*\)|\n\s*╰|$)/i
-		)?.[1] ?? null
-	);
+	const matches = [
+		...stripTerminalOutput(output).matchAll(
+			/Model usage([\s\S]*?)(?:\(\s*Press Esc\s+to\s+close\s*\)|\n\s*╰|$)/gi
+		)
+	];
+	const lastComplete = [...matches].reverse().find((match) => /\d+(?:\.\d+)?\s*%/.test(match[1]));
+
+	return (lastComplete ?? matches.at(-1))?.[1] ?? null;
+}
+
+function findLastMatchingLine(lines: string[], pattern: RegExp) {
+	for (let index = lines.length - 1; index >= 0; index -= 1) {
+		if (pattern.test(lines[index])) return lines[index];
+	}
+
+	return null;
+}
+
+function findLastMatchingIndex(lines: string[], pattern: RegExp) {
+	for (let index = lines.length - 1; index >= 0; index -= 1) {
+		if (pattern.test(lines[index])) return index;
+	}
+
+	return -1;
 }
 
 function extractGeminiModelUsageSectionLines(output: string) {
@@ -292,6 +319,57 @@ function parseGeminiModelUsageSpans(section: string): ModelUsage[] {
 	}
 
 	return usages;
+}
+
+function parseGeminiKnownModelRows(output: string, lines: string[]): ModelUsage[] {
+	const chunks = [
+		...lines,
+		...stripTerminalOutput(output)
+			.replace(/[│┃║]/g, '\n')
+			.split('\n')
+			.map((line) => normalizeGeminiUsageLine(line)),
+		normalizeGeminiUsageLine(stripTerminalOutput(output).replace(/[\r\n│┃║]+/g, ' '))
+	].filter(Boolean);
+	const usages: ModelUsage[] = [];
+	const seen = new Set<string>();
+
+	for (const chunk of chunks) {
+		const matches = [...chunk.matchAll(GEMINI_MODEL_NAME_PATTERN)];
+		for (let index = 0; index < matches.length; index += 1) {
+			const match = matches[index];
+			if (match.index === undefined) continue;
+
+			const label = cleanGeminiModelLabel(match[1]);
+			if (!isGeminiModelUsageLabel(label)) continue;
+
+			const nextMatchIndex = matches[index + 1]?.index ?? chunk.length;
+			const span = chunk.slice(match.index + match[0].length, nextMatchIndex);
+			const usage = parseGeminiUsageAfterLabel(label, span);
+			if (!usage) continue;
+
+			const key = `${usage.label}\0${usage.percent}\0${usage.remainingText ?? ''}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			usages.push(usage);
+		}
+	}
+
+	return usages;
+}
+
+function parseGeminiUsageAfterLabel(label: string, value: string): ModelUsage | null {
+	const percentMatch = value.match(/(\d+(?:\.\d+)?)\s*%/);
+	if (!percentMatch || percentMatch.index === undefined) return null;
+
+	const afterPercent = value.slice(percentMatch.index + percentMatch[0].length);
+	const resetText = afterPercent.match(/\bResets?\s*:?\s*(.+)$/i)?.[1]?.trim() ?? null;
+
+	return {
+		label,
+		percent: clampPercent(Number(percentMatch[1])) ?? 0,
+		resetAt: resetText ? parseGeminiResetAt(resetText) : null,
+		remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+	};
 }
 
 function parseGeminiPercentResetRows(lines: string[]): ModelUsage[] {
@@ -436,7 +514,7 @@ function findUsageSection(lines: string[], windowId: 'fiveHour' | 'week') {
 		windowId === 'fiveHour'
 			? /\b(current\s*week|week|weekly|7\s*d|7\s*day)\b/i
 			: /\b(current\s*session|5\s*h|5\s*hour|five\s*hour)\b/i;
-	const startIndex = lines.findIndex((line) => startPattern.test(line));
+	const startIndex = findLastMatchingIndex(lines, startPattern);
 	if (startIndex < 0) return [];
 
 	const section = [];
@@ -451,6 +529,17 @@ function findUsageSection(lines: string[], windowId: 'fiveHour' | 'week') {
 function parsePercent(line: string) {
 	const match = line.match(/(\d+(?:\.\d+)?)\s*%/);
 	return match ? clampPercent(Number(match[1])) : null;
+}
+
+function parseUsagePercent(line: string) {
+	const percent = parsePercent(line);
+	if (percent === null) return null;
+
+	if (/\b(left|remaining|available)\b/i.test(line) && !/\bused\b/i.test(line)) {
+		return clampPercent(100 - percent);
+	}
+
+	return percent;
 }
 
 function parseRatio(line: string) {
@@ -583,7 +672,11 @@ function parseGeminiRemainingText(value: string) {
 }
 
 function cleanResetText(value: string) {
-	return value.replace(/[│]/g, ' ').replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+	return value
+		.replace(BOX_DECORATION_PATTERN, ' ')
+		.replace(/[()]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 function to24Hour(hour: number, meridiem: string) {

@@ -10,6 +10,8 @@
 - provider별 상태, 수집 시간, reset countdown, 사용률 bar 표시
 - Claude/Codex의 current, week usage 표시
 - Gemini CLI의 Flash, Flash Lite, Pro 모델 사용률 표시
+- TUI 출력 정규화: ANSI/control code 제거, 단독 `\r` 공백 처리, 그래프/box 문자 제거
+- Gemini 다중 redraw 대응: 퍼센트가 채워진 최신 `Model usage` 화면 기준 파싱
 - 주간 Pace 카드: 실제 사용률 bar와 목표 threshold marker 비교
 - 자동 refresh, 수동 refresh, refresh cooldown
 - 서버 로그 패널: `/api/server/logs` SSE 기반 실시간 로그 표시
@@ -78,7 +80,7 @@ CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architec
 ## 문서
 
 - [Architecture](docs/architecture.md): 구현 구조, API contract, refresh/cache 동작, 운영 메모
-- [HTML Overview](docs/index.html): 브라우저에서 바로 열 수 있는 공유용 문서
+- [HTML Overview](docs/ai_dash.html): 브라우저에서 바로 열 수 있는 공유용 문서
 
 ## 데이터
 

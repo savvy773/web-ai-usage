@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process';
-import { parseProviderUsage, stripTerminalOutput } from './parser';
+import {
+	BAR_DECORATION_PATTERN,
+	BOX_DECORATION_PATTERN,
+	parseProviderUsage,
+	stripTerminalOutput
+} from './parser';
 import { CLI_COLLECTION_CONFIG, PROVIDERS, type ProviderId, type ProviderUsage } from '$lib/usage';
 
 type PtyModule = typeof import('node-pty');
@@ -109,7 +114,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 			[...CLI_COLLECTION_CONFIG.shell.args],
 			{
 				name: 'xterm-256color',
-				cols: 120,
+				cols: providerId === 'gemini' ? 160 : 120,
 				rows: 36,
 				cwd: CLI_COLLECTION_CONFIG.workingDirectory,
 				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
@@ -314,7 +319,9 @@ function hasUsageOutput(providerId: ProviderId, output: string) {
 	if (providerId === 'gemini') {
 		return (
 			parsed.modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
-				.length >= 3
+				.length >= 3 ||
+			(/Model usage|Select Model/i.test(stripTerminalOutput(output)) &&
+				parsed.modelUsages.length >= 3)
 		);
 	}
 
@@ -382,8 +389,8 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 
 function normalizeCollectorMarkerLine(line: string) {
 	return line
-		.replace(/[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤]/g, ' ')
-		.replace(/[▬━─═╌╍▔▁█▌▐░▒▓■□▱▰▯▮▭]+/g, ' ')
+		.replace(BOX_DECORATION_PATTERN, ' ')
+		.replace(BAR_DECORATION_PATTERN, ' ')
 		.replace(/\s*(\d+(?:\.\d+)?)\s*%\s*/g, ' $1% ')
 		.replace(/\bResets?\s*:?\s*/gi, ' Resets: ')
 		.replace(/\s+/g, ' ')

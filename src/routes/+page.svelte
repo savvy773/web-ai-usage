@@ -435,40 +435,40 @@
 		const target = weeklyTargetPercent(remainingMs);
 		const diff = window.percent - target;
 
-		if (diff >= 22) {
+		if (diff >= 35) {
 			return {
-				label: 'Ease up',
+				label: 'Very high pace',
 				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
-				tone: 'text-rose-300',
-				surface: 'border-rose-400/30 bg-rose-500/10',
-				dot: 'bg-rose-300 shadow-[0_0_10px_rgba(253,164,175,0.45)]',
-				bar: '#fb7185',
+				tone: 'text-rose-100',
+				surface: 'border-rose-200/25 bg-rose-100/10',
+				dot: 'bg-rose-100 shadow-[0_0_10px_rgba(255,228,230,0.38)]',
+				bar: '#fecdd3',
 				used: window.percent,
 				target
 			};
 		}
 
-		if (diff >= 10) {
+		if (diff >= 24) {
+			return {
+				label: 'High pace',
+				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
+				tone: 'text-yellow-100',
+				surface: 'border-yellow-200/30 bg-yellow-100/10',
+				dot: 'bg-yellow-100 shadow-[0_0_10px_rgba(254,249,195,0.42)]',
+				bar: '#fde68a',
+				used: window.percent,
+				target
+			};
+		}
+
+		if (diff >= 14) {
 			return {
 				label: 'Ahead',
 				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
-				tone: 'text-orange-300',
-				surface: 'border-orange-400/30 bg-orange-500/10',
-				dot: 'bg-orange-300 shadow-[0_0_10px_rgba(253,186,116,0.45)]',
-				bar: '#fb923c',
-				used: window.percent,
-				target
-			};
-		}
-
-		if (diff >= 4) {
-			return {
-				label: 'Slightly ahead',
-				detail: `used ${percentLabel(window.percent)} / target ${target}%`,
-				tone: 'text-amber-300',
-				surface: 'border-amber-400/30 bg-amber-500/10',
-				dot: 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.4)]',
-				bar: '#fbbf24',
+				tone: 'text-emerald-100',
+				surface: 'border-emerald-200/20 bg-emerald-100/8',
+				dot: 'bg-emerald-100 shadow-[0_0_10px_rgba(209,250,229,0.3)]',
+				bar: '#a7f3d0',
 				used: window.percent,
 				target
 			};
