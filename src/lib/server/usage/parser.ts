@@ -11,8 +11,13 @@ import {
 const OSC_PATTERN = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
 // eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+// Handles copied/debug output where the ESC byte was dropped but the CSI body remains.
+const ORPHANED_CSI_PATTERN =
+	/\[(?:(?:\??\d+(?:;\d+)*)[ABCDGJKSTfm]|\?\d+(?:;\d+)*[hl]|[GJKSTfm])/g;
 // eslint-disable-next-line no-control-regex
 const TERMINAL_ESCAPE_PATTERN = /\x1b(?:[()#%][0-~]|[78=>])/g;
+// eslint-disable-next-line no-control-regex
+const SINGLE_CHARACTER_ESCAPE_PATTERN = /\x1b[@-_]/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
@@ -24,7 +29,9 @@ export function stripTerminalOutput(value: string) {
 	return value
 		.replace(OSC_PATTERN, '')
 		.replace(ANSI_PATTERN, '')
+		.replace(ORPHANED_CSI_PATTERN, '')
 		.replace(TERMINAL_ESCAPE_PATTERN, '')
+		.replace(SINGLE_CHARACTER_ESCAPE_PATTERN, '')
 		.replace(CONTROL_PATTERN, '')
 		.replace(/\r\n/g, '\n')
 		.replace(/\r/g, ' ');
