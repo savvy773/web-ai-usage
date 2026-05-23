@@ -82,7 +82,7 @@
 						Claude <code>/usage</code>, Codex <code>/status</code>, Gemini
 						<code>/model</code> 출력을 수집합니다.
 					</li>
-					<li>parser가 TUI escape, carriage return, 그래프 문자를 정규화합니다.</li>
+					<li>parser가 TUI escape, cursor movement, ESC가 빠진 CSI 조각, carriage return, 그래프 문자를 정규화합니다.</li>
 					<li>정규화된 usage는 <code>data/usage-history.json</code>에 저장됩니다.</li>
 					<li>
 						<code>/api/usage</code>가 JSON payload를 반환하고 Svelte 화면이 이를 렌더링합니다.
@@ -97,6 +97,7 @@
 					Gemini는 퍼센트 값이 채워진 마지막 <code>Model usage</code> redraw 화면을 우선합니다.
 				</li>
 				<li>box, bracket, block/bar 그래프 문자는 공통 정규식으로 제거합니다.</li>
+				<li>Claude redraw로 남는 <code>Curre t session</code>, <code>Rese s</code> 형태도 current/reset으로 인식합니다.</li>
 				<li>
 					Codex의 <code>92% left</code> 같은 표현은 dashboard 기준인 used percent로 변환합니다.
 				</li>

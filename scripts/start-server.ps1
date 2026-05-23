@@ -293,13 +293,7 @@ function Start-DashboardServer {
 
 	New-Item -ItemType Directory -Force $LogsDir | Out-Null
 
-	$serverEnvironment = @{
-		NO_COLOR    = '1'
-		FORCE_COLOR = '0'
-		TERM        = 'dumb'
-	}
-
-	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ProcessLogPath -RedirectStandardError $StartupErrorLogPath -Environment $serverEnvironment -PassThru
+	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ProcessLogPath -RedirectStandardError $StartupErrorLogPath -PassThru
 	Write-ServerState -Process $serverProcess
 	return 0
 }

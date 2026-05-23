@@ -10,6 +10,9 @@ import {
 // eslint-disable-next-line no-control-regex
 const OSC_PATTERN = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
 // eslint-disable-next-line no-control-regex
+const CURSOR_MOVE_PATTERN = /\x1b\[[0-9;?]*[ABCDG]/g;
+const ORPHANED_CURSOR_MOVE_PATTERN = /\[(?:\??\d+(?:;\d+)*)[ABCDG]/g;
+// eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // Handles copied/debug output where the ESC byte was dropped but the CSI body remains.
 const ORPHANED_CSI_PATTERN =
@@ -22,13 +25,16 @@ const SINGLE_CHARACTER_ESCAPE_PATTERN = /\x1b[@-_]/g;
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
+const RESET_WORD_PATTERN = /\brese\s*(?:ts?|s)\s*:?\s*/i;
 export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤[\]]/g;
 export const BAR_DECORATION_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]+/g;
 
 export function stripTerminalOutput(value: string) {
 	return value
 		.replace(OSC_PATTERN, '')
+		.replace(CURSOR_MOVE_PATTERN, ' ')
 		.replace(ANSI_PATTERN, '')
+		.replace(ORPHANED_CURSOR_MOVE_PATTERN, ' ')
 		.replace(ORPHANED_CSI_PATTERN, '')
 		.replace(TERMINAL_ESCAPE_PATTERN, '')
 		.replace(SINGLE_CHARACTER_ESCAPE_PATTERN, '')
@@ -190,30 +196,17 @@ function applyCodexLimitLine(window: UsageWindow, line: string) {
 }
 
 function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
-	const usageSection = extractGeminiModelUsageSection(output);
 	const barUsages = parseGeminiBarModelRows(output);
 	if (barUsages.length >= 3) {
 		return mergeGeminiModelUsages(barUsages);
-	}
-
-	const sectionLines = extractGeminiModelUsageSectionLines(output);
-	const sectionUsages = parseGeminiPercentResetRows(sectionLines);
-	if (sectionUsages.length >= 3) {
-		return mergeGeminiModelUsages([...barUsages, ...sectionUsages]);
 	}
 
 	const candidateLines = buildGeminiCandidateLines(output, lines);
 	const usages = [
 		...barUsages,
 		...parseGeminiKnownModelRows(output, candidateLines),
-		...parseGeminiModelUsageScreen(output),
-		...(usageSection ? parseGeminiModelUsageSpans(usageSection) : []),
-		...parseGeminiPercentResetRows(candidateLines),
 		...parseGeminiSplitModelUsageLines(candidateLines),
-		...parseGeminiOrderedModelPercentFallback(output, candidateLines),
-		...candidateLines
-			.map(parseGeminiModelUsageLine)
-			.filter((usage): usage is ModelUsage => usage !== null)
+		...parseGeminiOrderedModelPercentFallback(output, candidateLines)
 	];
 
 	return mergeGeminiModelUsages(usages);
@@ -244,16 +237,6 @@ function findLastMatchingIndex(lines: string[], pattern: RegExp) {
 	}
 
 	return -1;
-}
-
-function extractGeminiModelUsageSectionLines(output: string) {
-	const section = extractGeminiModelUsageSection(output);
-	if (!section) return [];
-
-	return section
-		.split('\n')
-		.map((line) => normalizeGeminiUsageLine(line))
-		.filter((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line));
 }
 
 function mergeGeminiModelUsages(usages: ModelUsage[]) {
@@ -303,49 +286,6 @@ function geminiModelSortIndex(label: string) {
 	if (/^Pro$/i.test(label)) return 2;
 	if (/^gemini-/i.test(label)) return 3;
 	return 4;
-}
-
-function parseGeminiModelUsageScreen(output: string): ModelUsage[] {
-	const usageSection = extractGeminiModelUsageSection(output) ?? output;
-	const usages: ModelUsage[] = [];
-	const pattern =
-		/(?:^|\n|│)\s*([A-Za-z][A-Za-z0-9 ._\-…]*?)\s*[▬━─█▌▐░▒▓■□▱▰▯▮▭ ]{8,}\s+(\d+(?:\.\d+)?)\s*%\s*(?:Resets?\s*:?\s*([^\n│]+))?/gi;
-
-	for (const match of usageSection.matchAll(pattern)) {
-		const label = cleanGeminiModelLabel(match[1]);
-		if (!label) continue;
-
-		const resetText = match[3]?.trim() ?? null;
-		usages.push({
-			label,
-			percent: clampPercent(Number(match[2])) ?? 0,
-			resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-			remainingText: resetText ? parseGeminiRemainingText(resetText) : null
-		});
-	}
-
-	return usages;
-}
-
-function parseGeminiModelUsageSpans(section: string): ModelUsage[] {
-	const usages: ModelUsage[] = [];
-	const pattern =
-		/\b(Flash Lite|Flash|Pro|gemini-[^\s│┃║]+)[\s\S]{0,240}?(\d+(?:\.\d+)?)\s*%\s*(?:Resets?\s*:?\s*([^\n│┃║]+))?/gi;
-
-	for (const match of section.matchAll(pattern)) {
-		const label = cleanGeminiModelLabel(match[1]);
-		if (!isGeminiModelUsageLabel(label)) continue;
-
-		const resetText = match[3]?.trim() ?? null;
-		usages.push({
-			label,
-			percent: clampPercent(Number(match[2])) ?? 0,
-			resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-			remainingText: resetText ? parseGeminiRemainingText(resetText) : null
-		});
-	}
-
-	return usages;
 }
 
 function parseGeminiBarModelRows(output: string): ModelUsage[] {
@@ -466,32 +406,6 @@ function parseGeminiUsageAfterLabel(label: string, value: string): ModelUsage | 
 		resetAt: resetText ? parseGeminiResetAt(resetText) : null,
 		remainingText: resetText ? parseGeminiRemainingText(resetText) : null
 	};
-}
-
-function parseGeminiPercentResetRows(lines: string[]): ModelUsage[] {
-	let fallbackIndex = 0;
-
-	return lines
-		.map((line): ModelUsage | null => {
-			const normalized = normalizeGeminiUsageLine(line);
-			const percentMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%\s+Resets?\s*:?\s*(.+)$/i);
-			if (!percentMatch || percentMatch.index === undefined) return null;
-
-			const resetText = percentMatch[2].trim();
-			const label = cleanGeminiModelLabel(normalized.slice(0, percentMatch.index));
-			const usableLabel =
-				label && !/model usage|select model/i.test(label)
-					? label
-					: `Gemini model ${++fallbackIndex}`;
-
-			return {
-				label: usableLabel,
-				percent: clampPercent(Number(percentMatch[1])) ?? 0,
-				resetAt: parseGeminiResetAt(resetText),
-				remainingText: parseGeminiRemainingText(resetText)
-			};
-		})
-		.filter((usage): usage is ModelUsage => usage !== null);
 }
 
 function parseGeminiSplitModelUsageLines(lines: string[]): ModelUsage[] {
@@ -684,12 +598,12 @@ function isGeminiModelUsageLabel(value: string) {
 function findUsageSection(lines: string[], windowId: 'fiveHour' | 'week') {
 	const startPattern =
 		windowId === 'fiveHour'
-			? /\b(current\s*session|5\s*h|5\s*hour|five\s*hour)\b/i
-			: /\b(current\s*week|week|weekly|7\s*d|7\s*day)\b/i;
+			? /\b(current\s*session|curre\s*t\s*session|curret\s*session|5\s*h|5\s*hour|five\s*hour)\b/i
+			: /\b(current\s*week|week\s+limit|weekly\s+limit|7\s*d|7\s*day)\b/i;
 	const otherPattern =
 		windowId === 'fiveHour'
-			? /\b(current\s*week|week|weekly|7\s*d|7\s*day)\b/i
-			: /\b(current\s*session|5\s*h|5\s*hour|five\s*hour)\b/i;
+			? /\b(current\s*week|week\s+limit|weekly\s+limit|7\s*d|7\s*day)\b/i
+			: /\b(current\s*session|curre\s*t\s*session|curret\s*session|5\s*h|5\s*hour|five\s*hour)\b/i;
 	const startIndex = findLastMatchingIndex(lines, startPattern);
 	if (startIndex < 0) return [];
 
@@ -742,7 +656,7 @@ function parseCompactNumber(value: string) {
 }
 
 function parseRemainingText(line: string) {
-	const resetMatch = line.match(/\bresets?\s*:?\s*(.+)/i);
+	const resetMatch = line.match(new RegExp(`${RESET_WORD_PATTERN.source}(.+)`, 'i'));
 	if (resetMatch) return cleanResetText(resetMatch[1]);
 
 	if (!/\b(reset|resets|renews|remaining|left|until)\b/i.test(line)) return null;
@@ -756,7 +670,9 @@ function parseRemainingText(line: string) {
 }
 
 function parseResetAt(line: string) {
-	const resetMatch = line.match(/\bresets?\s*:?\s*(.+?)(?:\s*\(([^)]+)\)|\))?$/i);
+	const resetMatch = line.match(
+		new RegExp(`${RESET_WORD_PATTERN.source}(.+?)(?:\\s*\\(([^)]+)\\)|\\))?$`, 'i')
+	);
 	if (!resetMatch) return null;
 
 	const rawDate = cleanResetText(resetMatch[1]);
