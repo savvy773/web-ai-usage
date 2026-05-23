@@ -189,6 +189,15 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 			}
 		};
 
+		const writeSlashCommandFallback = () => {
+			if (wroteSlashCommand) return;
+			if (providerId === 'codex' && shouldWaitForCodexReady(output)) {
+				schedule(writeSlashCommandFallback, 1000);
+				return;
+			}
+			writeSlashCommand();
+		};
+
 		terminal.onData((chunk) => {
 			output = appendCapturedOutput(output, chunk);
 
@@ -213,7 +222,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 
 		schedule(writeCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs);
 		schedule(
-			writeSlashCommand,
+			writeSlashCommandFallback,
 			CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
 		);
 
@@ -226,17 +235,32 @@ function isShellReady(output: string) {
 }
 
 function isCliReady(providerId: ProviderId, output: string) {
-	const tail = output.slice(-4000);
+	const tail = stripTerminalOutput(output.slice(-8000));
 	if (providerId === 'claude') {
 		return /\? for shortcuts|Advisor Tool|Try ["“]|Welcome back/i.test(tail);
 	}
 	if (providerId === 'codex') {
-		return (
-			/Use \/skills/i.test(tail) ||
-			(/gpt-[^\r\n]+ · [A-Z]:\\/i.test(tail) && !/Booting MCP server/i.test(tail))
-		);
+		return isCodexReadyTail(tail);
 	}
 	return /Type your message|workspace\s+\(\/directory\)/i.test(tail);
+}
+
+function isCodexReadyTail(tail: string) {
+	if (/Use \/skills/i.test(tail)) return true;
+
+	const readyMatches = [...tail.matchAll(/gpt-[^\r\n]+ · [A-Z]:\\/gi)];
+	const readyIndex = readyMatches.at(-1)?.index ?? -1;
+	if (readyIndex < 0) return false;
+
+	const bootIndex = tail.toLowerCase().lastIndexOf('booting mcp server');
+	return readyIndex > bootIndex;
+}
+
+function shouldWaitForCodexReady(output: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	if (isCodexReadyTail(tail)) return false;
+
+	return /booting mcp server|model:\s*loading/i.test(tail);
 }
 
 function slashDelayMs(providerId: ProviderId) {

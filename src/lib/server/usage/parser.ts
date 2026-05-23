@@ -15,8 +15,7 @@ const ORPHANED_CURSOR_MOVE_PATTERN = /\[(?:\??\d+(?:;\d+)*)[ABCDG]/g;
 // eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // Handles copied/debug output where the ESC byte was dropped but the CSI body remains.
-const ORPHANED_CSI_PATTERN =
-	/\[(?:(?:\??\d+(?:;\d+)*)[ABCDGJKSTfm]|\?\d+(?:;\d+)*[hl]|[GJKSTfm])/g;
+const ORPHANED_CSI_PATTERN = /\[(?:(?:\??\d+(?:;\d+)*)[ABCDGJKSTfm]|\?\d+(?:;\d+)*[hl]|[GJKSTfm])/g;
 // eslint-disable-next-line no-control-regex
 const TERMINAL_ESCAPE_PATTERN = /\x1b(?:[()#%][0-~]|[78=>])/g;
 // eslint-disable-next-line no-control-regex
@@ -24,6 +23,7 @@ const SINGLE_CHARACTER_ESCAPE_PATTERN = /\x1b[@-_]/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
+const GEMINI_MODEL_LABEL_PATTERN = /^(?:Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)$/i;
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const RESET_WORD_PATTERN = /\brese\s*(?:ts?|s)\s*:?\s*/i;
 export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤[\]]/g;
@@ -394,10 +394,12 @@ function parseGeminiKnownModelRows(output: string, lines: string[]): ModelUsage[
 }
 
 function parseGeminiUsageAfterLabel(label: string, value: string): ModelUsage | null {
-	const percentMatch = value.match(/(\d+(?:\.\d+)?)\s*%/);
+	const normalized = normalizeGeminiUsageLine(value);
+	const percentMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%/);
 	if (!percentMatch || percentMatch.index === undefined) return null;
+	if (isGeminiStatusPercentContext(normalized, percentMatch)) return null;
 
-	const afterPercent = value.slice(percentMatch.index + percentMatch[0].length);
+	const afterPercent = normalized.slice(percentMatch.index + percentMatch[0].length);
 	const resetText = afterPercent.match(/\bResets?\s*:?\s*(.+)$/i)?.[1]?.trim() ?? null;
 
 	return {
@@ -428,6 +430,7 @@ function parseGeminiSplitModelUsageLines(lines: string[]): ModelUsage[] {
 
 		const percentMatch = line.match(/(\d+(?:\.\d+)?)\s*%/);
 		if (!pendingLabel || !percentMatch) continue;
+		if (isGeminiStatusPercentContext(line, percentMatch)) continue;
 
 		const resetMatch = line
 			.slice((percentMatch.index ?? 0) + percentMatch[0].length)
@@ -454,12 +457,13 @@ function parseGeminiOrderedModelPercentFallback(output: string, lines: string[])
 			.map((match) => cleanGeminiModelLabel(match[1]))
 			.filter(isGeminiModelUsageLabel);
 		const percents = [...chunk.matchAll(/(\d+(?:\.\d+)?)\s*%/g)];
-		if (labels.length < 3 || percents.length < 3) continue;
+		const usagePercents = percents.filter((match) => !isGeminiStatusPercentContext(chunk, match));
+		if (labels.length < 3 || usagePercents.length < 3) continue;
 
 		const modelLabels = takeLastDistinctGeminiLabels(labels);
 		if (modelLabels.length < 3) continue;
 
-		const usablePercents = percents.slice(-modelLabels.length);
+		const usablePercents = usagePercents.slice(-modelLabels.length);
 		if (usablePercents.length < modelLabels.length) continue;
 
 		candidates.push(
@@ -533,6 +537,7 @@ function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 
 	const percentMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%/);
 	if (!percentMatch || percentMatch.index === undefined) return null;
+	if (isGeminiStatusPercentContext(normalized, percentMatch)) return null;
 
 	const label = cleanGeminiModelLabel(normalized.slice(0, percentMatch.index));
 	if (!isGeminiModelUsageLabel(label)) return null;
@@ -585,13 +590,22 @@ function cleanGeminiModelLabel(value: string) {
 }
 
 function isGeminiModelUsageLabel(value: string) {
+	return GEMINI_MODEL_LABEL_PATTERN.test(value);
+}
+
+function isGeminiStatusPercentContext(value: string, percentMatch: RegExpMatchArray) {
+	if (percentMatch.index === undefined) return false;
+
+	const afterPercent = value.slice(
+		percentMatch.index + percentMatch[0].length,
+		percentMatch.index + 80
+	);
+	const beforePercent = value.slice(Math.max(0, percentMatch.index - 80), percentMatch.index);
+
 	return (
-		value.length > 0 &&
-		value.length <= 80 &&
-		/[a-z0-9]/i.test(value) &&
-		!/model usage|select model|let gemini|remember model|press esc|startup|manual|auto|resets?|type your message|\//i.test(
-			value
-		)
+		/^\s*(?:used|left|remaining|available)\b/i.test(afterPercent) ||
+		(/\b(?:limit|quota)\b/i.test(`${beforePercent} ${afterPercent}`) &&
+			!/\bResets?\s*:/i.test(afterPercent))
 	);
 }
 
