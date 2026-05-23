@@ -12,7 +12,7 @@
 - Gemini CLI의 Flash, Flash Lite, Pro 모델 사용률 표시
 - TUI 출력 정규화: ANSI/OSC/control code, cursor movement, ESC가 빠진 CSI 조각, 그래프/box 문자 제거
 - Gemini 다중 redraw 대응: 퍼센트가 채워진 최신 `Model usage` 화면 기준 파싱
-- 주간 Pace 카드: 실제 사용률 bar와 목표 threshold marker 비교
+- 주간 Pace 카드: 실제 사용률 bar와 최소 20%에서 시작하는 목표 threshold marker 비교
 - 자동 refresh, 수동 refresh, refresh cooldown
 - 서버 로그 패널: `/api/server/logs` SSE 기반 실시간 로그 표시
 - 서버 종료 버튼: `/api/server/stop` 호출

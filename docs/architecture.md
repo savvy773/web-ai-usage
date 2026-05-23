@@ -180,7 +180,7 @@ ready 감지:
 - Claude는 기본 command delay 6초를 사용합니다.
 - Codex와 Gemini는 최소 10초 뒤 slash command fallback 입력을 예약합니다. ready 감지가 느리거나 prompt 문자열이 바뀌어도 수집을 시도하기 위한 장치입니다. Codex는 fallback 시점에도 `Booting MCP server` 또는 `model: loading`만 보이면 `/status` 입력을 1초씩 늦춥니다.
 - Codex는 `/status` 입력 후 400ms 뒤 Enter를 한 번 더 보내 command 선택/확정을 보완합니다.
-- Gemini는 `/model`이 prompt에 남아 있고 `Select Model`/`Model usage` 화면이 아직 안 보이면 800ms, 2초, 5초 지점에 Enter를 추가로 보냅니다.
+- Gemini는 `/model`이 prompt에 남아 있고 `Select Model`/`Model usage` 화면이 아직 안 보이면 Enter를 반복 확인합니다. 첫 확인은 800ms 뒤이고, 이후 2초 간격으로 Gemini capture timeout 10초 전까지 계속합니다. 첫 startup/auth redraw가 길 때 `/model`이 입력줄에 남은 채 멈추는 케이스를 줄이기 위한 처리입니다.
 
 완료 판단:
 
@@ -312,7 +312,7 @@ message 규칙:
 - Gemini CLI: Flash, Flash Lite, Pro 모델별 사용률 표시
 - 각 usage bar에는 80% 기준선이 표시됩니다.
 - Week usage에는 Pace 카드가 표시됩니다.
-- Pace 카드는 현재 week 사용률을 fill bar로 표시하고 목표 pace를 vertical threshold marker line으로 표시합니다. 살짝 앞서는 사용량은 독려 성격으로 `On pace` 또는 부드러운 pastel green을 유지하고, 크게 앞설 때는 pastel yellow, 과도하게 앞설 때만 pastel rose warning을 표시합니다.
+- Pace 카드는 현재 week 사용률을 fill bar로 표시하고 목표 pace를 vertical threshold marker line으로 표시합니다. 목표 marker는 주 초반에도 최소 20%에서 시작합니다. 살짝 앞서는 사용량은 독려 성격으로 `On pace` 또는 부드러운 pastel green을 유지하고, 크게 앞설 때는 pastel yellow, 과도하게 앞설 때만 pastel rose warning을 표시합니다.
 - reset 시간은 남은 day/hour/minute 단위로 분리해 보여줍니다.
 - provider 우측 상단에는 상태와 수집 소요 시간이 표시됩니다.
 
@@ -580,7 +580,8 @@ event payload:
 collector 로그의 marker 의미:
 
 - Gemini `markers=model-screen,model-name,bar-row,percent,reset-word,percent-reset`: usage 화면, 모델명, bar row, percent, reset text가 모두 보입니다. 이 상태에서 실패하면 parser row 결합이나 label 정규화 문제를 먼저 봅니다.
-- Gemini `markers=model-name,bar-row,percent`: 모델명과 bar/percent는 보이지만 reset text가 같은 row로 복구되지 않았을 수 있습니다.
+- Gemini `markers=slash-buffer,quota-percent`: `/model`이 입력줄에 남아 있고 하단 quota percent만 보이는 상태입니다. 모델 usage 화면이 아직 열리지 않은 수집 타이밍 문제를 먼저 봅니다.
+- Gemini `markers=model-name,bar-row,percent`: 모델 usage row의 모델명과 bar/percent는 보이지만 reset text가 같은 row로 복구되지 않았을 수 있습니다.
 - Gemini `markers=model-name,percent`: section 경계가 깨졌거나 redraw 중간일 가능성이 큽니다. 이 경우 `\r` 처리, bar row parser, 마지막 redraw 선택 로직이 핵심입니다.
 - Gemini `parsed-models=1/3`: parser가 인정한 모델 row 수입니다. Gemini provider는 모델 usage가 3개 이상이어야 `ok`가 될 수 있습니다.
 - Gemini `parsed-labels=Flash|Flash Lite|Pro`: parser가 회수한 모델 label 목록입니다.

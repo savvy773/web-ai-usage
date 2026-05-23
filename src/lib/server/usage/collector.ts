@@ -16,6 +16,9 @@ const MAX_COLLECTION_ATTEMPTS = 3;
 const COLLECTION_RETRY_DELAY_MS = 1500;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
+const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
+const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
+const GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
 
 export async function collectAllUsage(): Promise<ProviderUsage[]> {
 	const results: ProviderUsage[] = [];
@@ -175,17 +178,23 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 				schedule(() => safeWrite('\r', 'Failed to confirm slash command.'), 400);
 			}
 			if (providerId === 'gemini') {
-				for (const delayMs of [800, 2000, 5000]) {
-					schedule(() => {
-						const tail = output.slice(-3000);
-						if (
-							new RegExp(`>\\s*${escapeRegExp(slashCommand)}`).test(tail) &&
-							!/Select Model|Model usage/i.test(tail)
-						) {
-							safeWrite('\r', 'Failed to confirm slash command.');
-						}
-					}, delayMs);
-				}
+				const startedAt = performance.now();
+				const confirmUntilMs = Math.max(
+					10_000,
+					captureTimeoutMs(providerId) - GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS
+				);
+
+				const confirmSlashCommand = () => {
+					if (settled) return;
+					if (shouldConfirmGeminiSlashCommand(output, slashCommand)) {
+						safeWrite('\r', 'Failed to confirm slash command.');
+					}
+					if (performance.now() - startedAt < confirmUntilMs && !hasGeminiModelScreen(output)) {
+						schedule(confirmSlashCommand, GEMINI_SLASH_CONFIRM_INTERVAL_MS);
+					}
+				};
+
+				schedule(confirmSlashCommand, 800);
 			}
 		};
 
@@ -243,6 +252,21 @@ function isCliReady(providerId: ProviderId, output: string) {
 		return isCodexReadyTail(tail);
 	}
 	return /Type your message|workspace\s+\(\/directory\)/i.test(tail);
+}
+
+function shouldConfirmGeminiSlashCommand(output: string, slashCommand: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	if (hasGeminiModelScreenText(tail)) return false;
+
+	return new RegExp(`(?:^|\\n)[^\\n]*>\\s*${escapeRegExp(slashCommand)}\\b`, 'i').test(tail);
+}
+
+function hasGeminiModelScreen(output: string) {
+	return hasGeminiModelScreenText(stripTerminalOutput(output.slice(-8000)));
+}
+
+function hasGeminiModelScreenText(value: string) {
+	return /Select Model|Model usage/i.test(value);
 }
 
 function isCodexReadyTail(tail: string) {
@@ -443,16 +467,25 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 	}
 
 	if (providerId === 'gemini') {
+		const usageRows = lines
+			.map((line, index) => ({ raw: line, normalized: normalizedLines[index] }))
+			.filter((line) => isGeminiUsageRowCandidate(line.raw, line.normalized));
 		return [
 			normalizedLines.some((line) => /model usage|select model/i.test(line))
 				? 'model-screen'
 				: null,
-			normalizedLines.some((line) => /\b(?:flash|pro)\b/i.test(line)) ? 'model-name' : null,
-			lines.some((line) => GEMINI_BAR_RUN_PATTERN.test(line)) ? 'bar-row' : null,
-			normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null,
-			normalizedLines.some((line) => /\bResets?\s*:/i.test(line)) ? 'reset-word' : null,
-			normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line))
+			normalizedLines.some((line) => />\s*\/model\b/i.test(line)) ? 'slash-buffer' : null,
+			usageRows.length > 0 ? 'model-name' : null,
+			usageRows.some((line) => GEMINI_BAR_RUN_PATTERN.test(line.raw)) ? 'bar-row' : null,
+			usageRows.some((line) => /\d+(?:\.\d+)?\s*%/.test(line.normalized)) ? 'percent' : null,
+			usageRows.some((line) => /\bResets?\s*:/i.test(line.normalized)) ? 'reset-word' : null,
+			usageRows.some((line) => /\d+(?:\.\d+)?\s*%\s+Resets?\s*:/i.test(line.normalized))
 				? 'percent-reset'
+				: null,
+			normalizedLines.some((line) =>
+				/\bquota\b.*\d+(?:\.\d+)?\s*%|\d+(?:\.\d+)?\s*%\s+used/i.test(line)
+			)
+				? 'quota-percent'
 				: null
 		].filter((marker): marker is string => marker !== null);
 	}
@@ -461,6 +494,13 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 		normalizedLines.some((line) => /\busage\b/i.test(line)) ? 'usage-word' : null,
 		normalizedLines.some((line) => /\d+(?:\.\d+)?\s*%/.test(line)) ? 'percent' : null
 	].filter((marker): marker is string => marker !== null);
+}
+
+function isGeminiUsageRowCandidate(rawLine: string, normalizedLine: string) {
+	return (
+		GEMINI_USAGE_ROW_LABEL_PATTERN.test(normalizedLine) &&
+		(GEMINI_BAR_RUN_PATTERN.test(rawLine) || /\d+(?:\.\d+)?\s*%/.test(normalizedLine))
+	);
 }
 
 function normalizeCollectorMarkerLine(line: string) {

@@ -30,6 +30,7 @@
 	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 	const DAY_MS = 24 * 60 * 60 * 1000;
+	const MIN_WEEKLY_PACE_TARGET = 20;
 	const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en', {
 		hour: '2-digit',
 		minute: '2-digit',
@@ -527,7 +528,7 @@
 
 	function weeklyTargetPercent(remainingMs: number) {
 		const remainingDays = remainingMs / DAY_MS;
-		if (remainingDays > 6) return 10;
+		if (remainingDays > 6) return MIN_WEEKLY_PACE_TARGET;
 		if (remainingDays > 5) return 20;
 		if (remainingDays > 4) return 35;
 		if (remainingDays > 3) return 50;
