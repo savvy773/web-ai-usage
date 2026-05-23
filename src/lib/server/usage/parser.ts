@@ -553,7 +553,7 @@ function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 function parseGeminiModelLabelOnly(line: string) {
 	const normalized = normalizeGeminiUsageLine(line);
 	if (
-		/\d+(?:\.\d+)?\s*%|model usage|select model|let gemini|remember model|press esc|startup|manual|auto/i.test(
+		/\d+(?:\.\d+)?\s*%|model usage|select model|let gemini|remember model|press esc|startup|manual|auto|type your message|\//i.test(
 			normalized
 		)
 	) {
@@ -589,7 +589,7 @@ function isGeminiModelUsageLabel(value: string) {
 		value.length > 0 &&
 		value.length <= 80 &&
 		/[a-z0-9]/i.test(value) &&
-		!/model usage|select model|let gemini|remember model|press esc|startup|manual|auto|resets?/i.test(
+		!/model usage|select model|let gemini|remember model|press esc|startup|manual|auto|resets?|type your message|\//i.test(
 			value
 		)
 	);
