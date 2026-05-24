@@ -12,9 +12,11 @@ type PtyModule = typeof import('node-pty');
 
 const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
-const MAX_COLLECTION_ATTEMPTS = 3;
-const COLLECTION_RETRY_DELAY_MS = 1500;
+const MAX_COLLECTION_ATTEMPTS = 5;
 const SHELL_READY_POLL_MS = 500;
+const STANDARD_RETRY_DELAY_MS = 1500;
+const PATIENT_RETRY_DELAY_MS = 5000;
+const FINAL_RETRY_DELAY_MS = 10_000;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
@@ -41,7 +43,7 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
 		let output = '';
 		try {
-			output = await runSlashCommand(provider.id, provider.command, provider.slashCommand);
+			output = await runSlashCommand(provider.id, provider.command, provider.slashCommand, attempt);
 			latestResult = parseProviderUsage(provider.id, output);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown collection error';
@@ -70,18 +72,19 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		const details = describeCollectionResult(diagnostics);
 
 		if (attempt < MAX_COLLECTION_ATTEMPTS) {
+			const retryDelayMs = collectionRetryDelayMs(attempt);
 			if (transientStartupMiss) {
 				if (DEBUG_COLLECTOR_LOGS) {
 					console.info(
-						`[collector] ${provider.name} startup redraw only on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}; retrying in ${formatDuration(COLLECTION_RETRY_DELAY_MS)}. ${details}`
+						`[collector] ${provider.name} startup redraw only on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}; retrying in ${formatDuration(retryDelayMs)}. ${details}`
 					);
 				}
 			} else {
 				console.info(
-					`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(COLLECTION_RETRY_DELAY_MS)}. ${details}`
+					`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(retryDelayMs)}. ${details}`
 				);
 			}
-			await delay(COLLECTION_RETRY_DELAY_MS);
+			await delay(retryDelayMs);
 		} else {
 			console.warn(
 				`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}. ${details}`
@@ -100,19 +103,29 @@ function withCollectionDuration(provider: ProviderUsage, startedAt: number): Pro
 	};
 }
 
-async function runSlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
+async function runSlashCommand(
+	providerId: ProviderId,
+	command: string,
+	slashCommand: string,
+	attempt: number
+) {
 	try {
-		return await runPtySlashCommand(providerId, command, slashCommand);
+		return await runPtySlashCommand(providerId, command, slashCommand, attempt);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown node-pty error';
 		console.info(
 			`[collector] ${providerId} node-pty path failed; trying pipe fallback. ${message}`
 		);
-		return await runPipeSlashCommand(providerId, command, slashCommand);
+		return await runPipeSlashCommand(providerId, command, slashCommand, attempt);
 	}
 }
 
-async function runPtySlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
+async function runPtySlashCommand(
+	providerId: ProviderId,
+	command: string,
+	slashCommand: string,
+	attempt: number
+) {
 	const pty = (await import('node-pty')) as PtyModule;
 
 	return await new Promise<string>((resolve, reject) => {
@@ -207,7 +220,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 				const startedAt = performance.now();
 				const confirmUntilMs = Math.max(
 					10_000,
-					captureTimeoutMs(providerId) - GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS
+					captureTimeoutMs(providerId, attempt) - GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS
 				);
 
 				const confirmSlashCommand = () => {
@@ -261,7 +274,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 			CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
 		);
 
-		schedule(() => finish(output), captureTimeoutMs(providerId));
+		schedule(() => finish(output), captureTimeoutMs(providerId, attempt));
 	});
 }
 
@@ -324,12 +337,22 @@ function slashDelayMs(providerId: ProviderId) {
 	return Math.max(CLI_COLLECTION_CONFIG.commandDelayMs, 10_000);
 }
 
-function captureTimeoutMs(providerId: ProviderId) {
-	return (
+function captureTimeoutMs(providerId: ProviderId, attempt = 1) {
+	const baseTimeoutMs =
 		CLI_COLLECTION_CONFIG.providerCaptureTimeoutMs[
 			providerId as keyof typeof CLI_COLLECTION_CONFIG.providerCaptureTimeoutMs
-		] ?? CLI_COLLECTION_CONFIG.captureTimeoutMs
-	);
+		] ?? CLI_COLLECTION_CONFIG.captureTimeoutMs;
+
+	if (attempt < 3) return baseTimeoutMs;
+	if (providerId === 'codex' || providerId === 'gemini') return baseTimeoutMs + 30_000;
+	return baseTimeoutMs + 15_000;
+}
+
+function collectionRetryDelayMs(attempt: number) {
+	const nextAttempt = attempt + 1;
+	if (nextAttempt >= MAX_COLLECTION_ATTEMPTS) return FINAL_RETRY_DELAY_MS;
+	if (nextAttempt >= 3) return PATIENT_RETRY_DELAY_MS;
+	return STANDARD_RETRY_DELAY_MS;
 }
 
 function usageOutputSettleMs(providerId: ProviderId) {
@@ -347,7 +370,12 @@ function escapeRegExp(value: string) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function runPipeSlashCommand(providerId: ProviderId, command: string, slashCommand: string) {
+async function runPipeSlashCommand(
+	providerId: ProviderId,
+	command: string,
+	slashCommand: string,
+	attempt: number
+) {
 	return await new Promise<string>((resolve, reject) => {
 		let output = '';
 		let settled = false;
@@ -396,7 +424,7 @@ async function runPipeSlashCommand(providerId: ProviderId, command: string, slas
 			child.stdin.end();
 		}, CLI_COLLECTION_CONFIG.commandDelayMs);
 
-		const timeoutTimer = setTimeout(finish, captureTimeoutMs(providerId));
+		const timeoutTimer = setTimeout(finish, captureTimeoutMs(providerId, attempt));
 	});
 }
 

@@ -82,6 +82,13 @@
 - 조치: Codex capture timeout을 60초에서 90초로 증가.
 - 다음에 볼 것: 여전히 first-attempt partial이 반복되면 raw가 boot-only인지, usage row가 있는데 marker가 없는지 먼저 분리합니다.
 
+### 2026-05-24: Patient retries from attempt 3
+
+- 조치: Collector retry를 provider별 최대 5회로 증가.
+- 조치: 3회차부터 capture timeout을 더 길게 적용. Codex는 120초, Gemini는 135초까지 대기.
+- 조치: retry delay를 1.5초, 5초, 5초, 10초 cadence로 변경.
+- 다음에 볼 것: `attempt 3/5` 이후에도 실패하면 `last-failure` raw에서 usage row 부재와 parser miss를 먼저 분리합니다.
+
 ## 수정 후 검증
 
 - [ ] `pnpm check`

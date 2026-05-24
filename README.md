@@ -14,6 +14,7 @@
 - Gemini 다중 redraw 대응: 최신 `Model usage` 화면의 `label + bar + percent + Resets` row 구조 기준 파싱
 - 주간 Pace 카드: 실제 사용률 bar와 최소 20%에서 시작하는 목표 threshold marker 비교
 - 자동 refresh, 수동 refresh, 브라우저 reload refresh, refresh cooldown
+- Collector 재시도: provider별 최대 5회, 3회차부터 더 긴 timeout과 느린 retry cadence 적용
 - 서버 로그 패널: `/api/server/logs` SSE 기반 실시간 로그 표시
 - 서버 종료 버튼: `/api/server/stop` 호출
 - 서버 JSON history와 브라우저 `localStorage` fallback 캐시

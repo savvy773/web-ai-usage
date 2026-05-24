@@ -123,7 +123,7 @@ Resets May 28, 1pm (Asia/Seoul)
 
 ## Refresh 모델
 
-provider별 CLI 수집은 순차로 실행됩니다. 각 provider는 실패 시 최대 3회 재시도하며, 실패한 provider가 있어도 다음 provider 수집은 계속 진행합니다.
+provider별 CLI 수집은 순차로 실행됩니다. 각 provider는 실패 시 최대 5회 재시도하며, 실패한 provider가 있어도 다음 provider 수집은 계속 진행합니다. 1-2회차는 빠르게 회복을 확인하고, 3회차부터는 CLI startup/redraw가 늦는 케이스를 위해 더 긴 capture timeout과 느린 retry cadence를 사용합니다.
 
 | Provider   | Command               | Slash command |
 | ---------- | --------------------- | ------------- |
@@ -139,7 +139,9 @@ provider별 CLI 수집은 순차로 실행됩니다. 각 provider는 실패 시 
 | ------------------------- | ------------------------------ |
 | CLI working directory     | `D:\Code\_temp`                |
 | shell                     | `pwsh.exe`                     |
-| capture timeout           | 45초, Codex 90초, Gemini 105초 |
+| capture timeout           | 1-2회차: 45초, Codex 90초, Gemini 105초 |
+| patient capture timeout   | 3-5회차: 60초, Codex 120초, Gemini 135초 |
+| collector retry delay     | 1.5초, 5초, 5초, 10초          |
 | history bucket interval   | 10분                           |
 | prefetch lead time        | 30초 전                        |
 | quick refresh wait        | 2초                            |
