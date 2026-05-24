@@ -5,10 +5,19 @@ import type { ProviderId, ProviderUsage } from '$lib/usage';
 
 const MAX_RAW_CHARS = 40_000;
 
+type CollectorDebugSnapshotOptions = {
+	attempt?: number;
+	maxAttempts?: number;
+	markers?: string[];
+	parseDiagnostics?: string[];
+	writeFailureCopy?: boolean;
+};
+
 export async function writeCollectorDebugSnapshot(
 	providerId: ProviderId,
 	rawOutput: string,
-	result: ProviderUsage
+	result: ProviderUsage,
+	options: CollectorDebugSnapshotOptions = {}
 ) {
 	await mkdir(RAW_DIR, { recursive: true });
 
@@ -22,17 +31,34 @@ export async function writeCollectorDebugSnapshot(
 		collectionDurationMs: result.collectionDurationMs,
 		rawOutputChars: rawOutput.length,
 		rawTailChars: rawTail.length,
+		attempt: options.attempt ?? null,
+		maxAttempts: options.maxAttempts ?? null,
+		markers: options.markers ?? [],
+		parseDiagnostics: options.parseDiagnostics ?? [],
 		windows: result.windows,
 		modelUsages: result.modelUsages,
 		rawPreview: result.rawPreview
 	};
 
-	await Promise.all([
+	const writes = [
 		writeFile(path.join(RAW_DIR, `${providerId}-latest.txt`), rawTail, 'utf8'),
 		writeFile(
 			path.join(RAW_DIR, `${providerId}-latest.parsed.json`),
 			`${JSON.stringify(snapshot, null, 2)}\n`,
 			'utf8'
 		)
-	]);
+	];
+
+	if (options.writeFailureCopy) {
+		writes.push(
+			writeFile(path.join(RAW_DIR, `${providerId}-last-failure.txt`), rawTail, 'utf8'),
+			writeFile(
+				path.join(RAW_DIR, `${providerId}-last-failure.parsed.json`),
+				`${JSON.stringify(snapshot, null, 2)}\n`,
+				'utf8'
+			)
+		);
+	}
+
+	await Promise.all(writes);
 }

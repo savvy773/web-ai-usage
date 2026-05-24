@@ -97,6 +97,7 @@
 
 	onMount(() => {
 		restoreRefreshCooldown();
+		const pageWasReloaded = isPageReload();
 		const cachedPayload = readCachedPayload();
 		if (payload) {
 			cachePayload(payload);
@@ -106,7 +107,10 @@
 			loading = false;
 		}
 		if (!payload) {
-			void loadUsage({ refreshAfterLoad: true });
+			void loadUsage({ refreshAfterLoad: true, forceRefreshAfterLoad: pageWasReloaded });
+		} else if (pageWasReloaded && !initialRefreshStarted) {
+			initialRefreshStarted = true;
+			window.setTimeout(() => void refreshUsage('manual', { force: true }), 250);
 		} else if (
 			!initialRefreshStarted &&
 			!isRefreshCoolingDown(refreshCooldownUntil) &&
@@ -135,18 +139,23 @@
 		};
 	});
 
-	async function loadUsage(options: { refreshAfterLoad?: boolean } = {}) {
+	async function loadUsage(
+		options: { refreshAfterLoad?: boolean; forceRefreshAfterLoad?: boolean } = {}
+	) {
 		loading = true;
 		error = null;
 
 		try {
 			applyPayload(await fetchUsagePayload('/api/usage'));
 			if (options.refreshAfterLoad && !initialRefreshStarted && shouldRefreshOnMount(payload)) {
-				if (isRefreshCoolingDown(refreshCooldownUntil)) {
+				if (!options.forceRefreshAfterLoad && isRefreshCoolingDown(refreshCooldownUntil)) {
 					return;
 				}
 				initialRefreshStarted = true;
-				window.setTimeout(() => void refreshUsage('auto'), 250);
+				window.setTimeout(
+					() => void refreshUsage('auto', { force: options.forceRefreshAfterLoad }),
+					250
+				);
 			}
 		} catch (requestError) {
 			const cachedPayload = readCachedPayload();
@@ -159,8 +168,11 @@
 		}
 	}
 
-	async function refreshUsage(mode: 'manual' | 'auto' = 'manual') {
-		if (refreshing || isRefreshCoolingDown(refreshCooldownUntil)) {
+	async function refreshUsage(
+		mode: 'manual' | 'auto' = 'manual',
+		options: { force?: boolean } = {}
+	) {
+		if (refreshing || (!options.force && isRefreshCoolingDown(refreshCooldownUntil))) {
 			return;
 		}
 
@@ -528,14 +540,15 @@
 
 	function weeklyTargetPercent(remainingMs: number) {
 		const remainingDays = remainingMs / DAY_MS;
-		if (remainingDays > 6) return MIN_WEEKLY_PACE_TARGET;
-		if (remainingDays > 5) return 20;
-		if (remainingDays > 4) return 35;
-		if (remainingDays > 3) return 50;
-		if (remainingDays > 2) return 65;
-		if (remainingDays > 1) return 80;
-		if (remainingDays > 0.5) return 90;
-		return 95;
+		let target = 95;
+		if (remainingDays > 6) target = MIN_WEEKLY_PACE_TARGET;
+		else if (remainingDays > 5) target = 20;
+		else if (remainingDays > 4) target = 35;
+		else if (remainingDays > 3) target = 50;
+		else if (remainingDays > 2) target = 65;
+		else if (remainingDays > 1) target = 80;
+		else if (remainingDays > 0.5) target = 90;
+		return Math.max(MIN_WEEKLY_PACE_TARGET, target);
 	}
 
 	function statusTone(provider: ProviderUsage) {
@@ -603,6 +616,13 @@
 		} else {
 			localStorage.removeItem('usage-refresh-cooldown-until');
 		}
+	}
+
+	function isPageReload() {
+		const [navigation] = performance.getEntriesByType(
+			'navigation'
+		) as PerformanceNavigationTiming[];
+		return navigation?.type === 'reload';
 	}
 </script>
 

@@ -14,6 +14,7 @@ const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
 const MAX_COLLECTION_ATTEMPTS = 3;
 const COLLECTION_RETRY_DELAY_MS = 1500;
+const CODEX_FALLBACK_READY_WAIT_MS = 25_000;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
@@ -47,7 +48,14 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 			latestResult = parseProviderUsage(provider.id, '', message);
 		}
 
-		await writeCollectorDebugSnapshot(provider.id, output, latestResult).catch(() => undefined);
+		const diagnostics = buildCollectionDiagnostics(provider.id, output, latestResult);
+		await writeCollectorDebugSnapshot(provider.id, output, latestResult, {
+			attempt,
+			maxAttempts: MAX_COLLECTION_ATTEMPTS,
+			markers: diagnostics.markers,
+			parseDiagnostics: diagnostics.parseDetails,
+			writeFailureCopy: latestResult.status !== 'ok'
+		}).catch(() => undefined);
 
 		if (latestResult.status === 'ok') {
 			if (attempt > 1) {
@@ -58,7 +66,7 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 			return withCollectionDuration(latestResult, startedAt);
 		}
 
-		const details = describeCollectionResult(provider.id, output, latestResult);
+		const details = describeCollectionResult(diagnostics);
 
 		if (attempt < MAX_COLLECTION_ATTEMPTS) {
 			console.info(
@@ -103,6 +111,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 		let settled = false;
 		let wroteCommand = false;
 		let wroteSlashCommand = false;
+		let slashFallbackStartedAt: number | null = null;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		const timers = new Set<NodeJS.Timeout>();
@@ -200,7 +209,15 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 
 		const writeSlashCommandFallback = () => {
 			if (wroteSlashCommand) return;
-			if (providerId === 'codex' && shouldWaitForCodexReady(output)) {
+			if (providerId === 'codex') {
+				slashFallbackStartedAt ??= performance.now();
+			}
+			if (
+				providerId === 'codex' &&
+				shouldWaitForCodexReady(output) &&
+				performance.now() - (slashFallbackStartedAt ?? performance.now()) <
+					CODEX_FALLBACK_READY_WAIT_MS
+			) {
 				schedule(writeSlashCommandFallback, 1000);
 				return;
 			}
@@ -270,21 +287,27 @@ function hasGeminiModelScreenText(value: string) {
 }
 
 function isCodexReadyTail(tail: string) {
-	if (/Use \/skills/i.test(tail)) return true;
+	const bootIndex = latestCodexLoadingIndex(tail);
 
 	const readyMatches = [...tail.matchAll(/gpt-[^\r\n]+ · [A-Z]:\\/gi)];
 	const readyIndex = readyMatches.at(-1)?.index ?? -1;
-	if (readyIndex < 0) return false;
+	if (readyIndex >= 0) return readyIndex > bootIndex;
 
-	const bootIndex = tail.toLowerCase().lastIndexOf('booting mcp server');
-	return readyIndex > bootIndex;
+	const skillsMatches = [...tail.matchAll(/Use \/skills/gi)];
+	const skillsIndex = skillsMatches.at(-1)?.index ?? -1;
+	return skillsIndex >= 0 && skillsIndex > bootIndex;
 }
 
 function shouldWaitForCodexReady(output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
 	if (isCodexReadyTail(tail)) return false;
 
-	return /booting mcp server|model:\s*loading/i.test(tail);
+	return /booting\s+mcp\s+server|model:\s*loading|Use \/skills/i.test(tail);
+}
+
+function latestCodexLoadingIndex(tail: string) {
+	const loadingMatches = [...tail.matchAll(/booting\s+mcp\s+server|model:\s*loading/gi)];
+	return loadingMatches.at(-1)?.index ?? -1;
 }
 
 function slashDelayMs(providerId: ProviderId) {
@@ -370,11 +393,9 @@ function hasUsageOutput(providerId: ProviderId, output: string) {
 
 	if (providerId === 'gemini') {
 		return (
-			parsed.modelUsages.length >= 3 ||
+			parsed.modelUsages.length >= 3 &&
 			parsed.modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
-				.length >= 3 ||
-			(/Model usage|Select Model/i.test(stripTerminalOutput(output)) &&
-				parsed.modelUsages.length >= 3)
+				.length >= 3
 		);
 	}
 
@@ -399,7 +420,7 @@ function appendCapturedOutput(output: string, chunk: string) {
 	return nextOutput.length > MAX_CAPTURE_CHARS ? nextOutput.slice(-MAX_CAPTURE_CHARS) : nextOutput;
 }
 
-function describeCollectionResult(
+function buildCollectionDiagnostics(
 	providerId: ProviderId,
 	rawOutput: string,
 	result: ProviderUsage
@@ -410,14 +431,20 @@ function describeCollectionResult(
 		.map((line) => line.trim())
 		.filter(Boolean);
 	const markers = usageMarkers(providerId, lines);
-	const detail = [
-		`output=${output.length} chars/${lines.length} lines`,
-		`markers=${markers.length > 0 ? markers.join(',') : 'none'}`
-	];
-	detail.push(...parseDiagnostics(providerId, markers, result));
+	const parseDetails = parseDiagnostics(providerId, markers, result);
 
-	if (DEBUG_COLLECTOR_LOGS && result.rawPreview) {
-		detail.push(`tail=${JSON.stringify(result.rawPreview.slice(-500))}`);
+	return { output, lines, markers, parseDetails, result };
+}
+
+function describeCollectionResult(diagnostics: ReturnType<typeof buildCollectionDiagnostics>) {
+	const detail = [
+		`output=${diagnostics.output.length} chars/${diagnostics.lines.length} lines`,
+		`markers=${diagnostics.markers.length > 0 ? diagnostics.markers.join(',') : 'none'}`
+	];
+	detail.push(...diagnostics.parseDetails);
+
+	if (DEBUG_COLLECTOR_LOGS && diagnostics.result.rawPreview) {
+		detail.push(`tail=${JSON.stringify(diagnostics.result.rawPreview.slice(-500))}`);
 	}
 
 	return `(${detail.join('; ')})`;
@@ -432,6 +459,14 @@ function parseDiagnostics(providerId: ProviderId, markers: string[], result: Pro
 		detail.push(`parsed-labels=${parsedLabels.join('|')}`);
 	}
 	if (result.status === 'ok') return detail;
+
+	if (
+		markers.includes('quota-percent') &&
+		!markers.includes('model-screen') &&
+		!markers.includes('model-name')
+	) {
+		return [...detail, 'parse-failure=waiting for Model usage screen; saw quota/status percent'];
+	}
 
 	const missing = [];
 	if (!markers.includes('model-screen')) missing.push('model-screen');
@@ -498,8 +533,26 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 
 function isGeminiUsageRowCandidate(rawLine: string, normalizedLine: string) {
 	return (
-		GEMINI_USAGE_ROW_LABEL_PATTERN.test(normalizedLine) &&
+		(GEMINI_USAGE_ROW_LABEL_PATTERN.test(normalizedLine) ||
+			isStructuredGeminiBarUsageRow(rawLine, normalizedLine)) &&
 		(GEMINI_BAR_RUN_PATTERN.test(rawLine) || /\d+(?:\.\d+)?\s*%/.test(normalizedLine))
+	);
+}
+
+function isStructuredGeminiBarUsageRow(rawLine: string, normalizedLine: string) {
+	const barMatch = rawLine.match(GEMINI_BAR_RUN_PATTERN);
+	if (!barMatch || barMatch.index === undefined) return false;
+	if (!/\d+(?:\.\d+)?\s*%/.test(normalizedLine)) return false;
+
+	const label = normalizeCollectorMarkerLine(rawLine.slice(0, barMatch.index));
+	return (
+		label.length > 0 &&
+		label.length <= 48 &&
+		/[A-Za-z0-9]/.test(label) &&
+		!/\b(model usage|select model|press esc|type your message|quota|limit|used|left|remaining|resets?)\b/i.test(
+			label
+		) &&
+		!/[/\\<>|]/.test(label)
 	);
 }
 

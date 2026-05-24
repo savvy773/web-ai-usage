@@ -29,6 +29,11 @@ const RESET_WORD_PATTERN = /\brese\s*(?:ts?|s)\s*:?\s*/i;
 export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤[\]]/g;
 export const BAR_DECORATION_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]+/g;
 
+type GeminiBarRow = {
+	row: string;
+	acceptDynamicLabel: boolean;
+};
+
 export function stripTerminalOutput(value: string) {
 	return value
 		.replace(OSC_PATTERN, '')
@@ -83,17 +88,23 @@ export function parseProviderUsage(
 		.filter(Boolean);
 
 	const fiveHour =
-		providerId === 'gemini' ? createEmptyWindow('fiveHour') : parseWindow(lines, 'fiveHour');
-	const week = providerId === 'gemini' ? createEmptyWindow('week') : parseWindow(lines, 'week');
+		providerId === 'gemini'
+			? createEmptyWindow('fiveHour')
+			: parseWindow(lines, 'fiveHour', providerId);
+	const week =
+		providerId === 'gemini' ? createEmptyWindow('week') : parseWindow(lines, 'week', providerId);
 	const modelUsages = providerId === 'gemini' ? parseGeminiModelUsages(output, lines) : [];
 	const hasUsage =
 		providerId === 'gemini'
-			? modelUsages.length >= 3
-			: fiveHour.percent !== null ||
-				week.percent !== null ||
-				fiveHour.used !== null ||
-				week.used !== null ||
-				modelUsages.length > 0;
+			? modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
+					.length >= 3
+			: providerId === 'codex'
+				? fiveHour.percent !== null && week.percent !== null
+				: fiveHour.percent !== null ||
+					week.percent !== null ||
+					fiveHour.used !== null ||
+					week.used !== null ||
+					modelUsages.length > 0;
 	const hasOutput = output.length > 0;
 	const looksLikeCliProblem =
 		/not recognized|command not found|not found|enoent|login|auth|permission denied/i.test(
@@ -123,13 +134,18 @@ export function parseProviderUsage(
 	};
 }
 
-function parseWindow(lines: string[], windowId: 'fiveHour' | 'week'): UsageWindow {
+function parseWindow(
+	lines: string[],
+	windowId: 'fiveHour' | 'week',
+	providerId: ProviderId
+): UsageWindow {
 	const window = createEmptyWindow(windowId);
 	const limitLine = findCodexLimitLine(lines, windowId);
 	if (limitLine) {
 		applyCodexLimitLine(window, limitLine);
 		return window;
 	}
+	if (providerId === 'codex') return window;
 
 	const section = findUsageSection(lines, windowId);
 	const candidates =
@@ -244,7 +260,7 @@ function mergeGeminiModelUsages(usages: ModelUsage[]) {
 
 	for (const usage of usages) {
 		const label = cleanGeminiModelLabel(usage.label);
-		if (!isGeminiModelUsageLabel(label)) continue;
+		if (!isGeminiAcceptedModelLabel(label)) continue;
 
 		const normalized = { ...usage, label };
 		const previous = byLabel.get(label);
@@ -292,14 +308,16 @@ function parseGeminiBarModelRows(output: string): ModelUsage[] {
 	const usages: ModelUsage[] = [];
 	const seen = new Set<string>();
 
-	for (const row of buildGeminiBarModelRows(output)) {
-		const barMatch = row.match(GEMINI_BAR_RUN_PATTERN);
+	for (const candidate of buildGeminiBarModelRows(output)) {
+		const barMatch = candidate.row.match(GEMINI_BAR_RUN_PATTERN);
 		if (!barMatch || barMatch.index === undefined) continue;
 
-		const label = cleanGeminiModelLabel(row.slice(0, barMatch.index));
-		if (!isGeminiModelUsageLabel(label)) continue;
+		const label = candidate.acceptDynamicLabel
+			? cleanGeminiStructuredModelLabel(candidate.row.slice(0, barMatch.index))
+			: cleanGeminiKnownModelLabel(candidate.row.slice(0, barMatch.index));
+		if (!label) continue;
 
-		const value = row.slice(barMatch.index + barMatch[0].length);
+		const value = candidate.row.slice(barMatch.index + barMatch[0].length);
 		const usage = parseGeminiUsageAfterLabel(label, normalizeGeminiUsageLine(value));
 		if (!usage) continue;
 
@@ -313,14 +331,16 @@ function parseGeminiBarModelRows(output: string): ModelUsage[] {
 }
 
 function buildGeminiBarModelRows(output: string) {
-	const texts = [extractGeminiModelUsageSection(output), stripTerminalOutput(output)].filter(
-		(text): text is string => Boolean(text)
-	);
-	const rows: string[] = [];
+	const section = extractGeminiModelUsageSection(output);
+	const texts = [
+		section ? { text: section, acceptDynamicLabel: true } : null,
+		{ text: stripTerminalOutput(output), acceptDynamicLabel: false }
+	].filter((text): text is { text: string; acceptDynamicLabel: boolean } => text !== null);
+	const rows: GeminiBarRow[] = [];
 	const seen = new Set<string>();
 
-	for (const text of texts) {
-		const rawLines = text
+	for (const source of texts) {
+		const rawLines = source.text
 			.replace(/[│┃║]/g, '\n')
 			.split('\n')
 			.map((line) => line.trim())
@@ -348,9 +368,10 @@ function buildGeminiBarModelRows(output: string) {
 			}
 
 			const normalized = row.replace(/\s+/g, ' ').trim();
-			if (seen.has(normalized)) continue;
-			seen.add(normalized);
-			rows.push(normalized);
+			const key = `${source.acceptDynamicLabel ? 'panel' : 'fallback'}\0${normalized}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			rows.push({ row: normalized, acceptDynamicLabel: source.acceptDynamicLabel });
 		}
 	}
 
@@ -589,8 +610,38 @@ function cleanGeminiModelLabel(value: string) {
 		.trim();
 }
 
+function cleanGeminiStructuredModelLabel(value: string) {
+	const label = cleanGeminiModelLabel(value);
+	if (!isGeminiStructuredModelLabel(label)) return null;
+	return label;
+}
+
+function cleanGeminiKnownModelLabel(value: string) {
+	const label = cleanGeminiModelLabel(value);
+	if (!isGeminiModelUsageLabel(label)) return null;
+	return label;
+}
+
 function isGeminiModelUsageLabel(value: string) {
 	return GEMINI_MODEL_LABEL_PATTERN.test(value);
+}
+
+function isGeminiAcceptedModelLabel(value: string) {
+	return isGeminiModelUsageLabel(value) || isGeminiStructuredModelLabel(value);
+}
+
+function isGeminiStructuredModelLabel(value: string) {
+	const label = value.trim();
+	return (
+		label.length > 0 &&
+		label.length <= 48 &&
+		/[A-Za-z0-9]/.test(label) &&
+		!/\d+(?:\.\d+)?\s*%/.test(label) &&
+		!/\b(model usage|select model|press esc|type your message|quota|limit|used|left|remaining|resets?)\b/i.test(
+			label
+		) &&
+		!/[/\\<>|]/.test(label)
+	);
 }
 
 function isGeminiStatusPercentContext(value: string, percentMatch: RegExpMatchArray) {
