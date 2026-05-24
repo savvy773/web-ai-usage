@@ -99,6 +99,7 @@ Weekly limit: [████████████████░░░░] 82%
 
 중요: Codex의 `left`는 남은 양입니다. Dashboard는 모든 provider를 used percent로 표시하므로 `92% left`는 `8% used`로 변환합니다.
 Codex는 `5h limit`와 `Weekly limit` row가 모두 있어야 성공으로 봅니다. `100% context left` 같은 일반 상태줄은 usage row가 아니므로 current/week 값으로 쓰지 않습니다.
+첫 pty attempt가 Codex MCP boot redraw만 캡처하고 usage row 없이 끝나는 경우가 있습니다. 이때는 `markers=none`, raw output은 크지만 정규화 후 line 수가 거의 없는 형태입니다. Collector는 이 케이스를 startup transient로 보고 일반 retry 로그와 `last-failure` 덮어쓰기를 생략한 뒤 다음 attempt를 진행합니다.
 
 ### Claude `/usage`
 
@@ -138,7 +139,7 @@ provider별 CLI 수집은 순차로 실행됩니다. 각 provider는 실패 시 
 | ------------------------- | ------------------------------ |
 | CLI working directory     | `D:\Code\_temp`                |
 | shell                     | `pwsh.exe`                     |
-| capture timeout           | 45초, Codex 60초, Gemini 105초 |
+| capture timeout           | 45초, Codex 90초, Gemini 105초 |
 | history bucket interval   | 10분                           |
 | prefetch lead time        | 30초 전                        |
 | quick refresh wait        | 2초                            |
@@ -176,10 +177,10 @@ ready 감지:
 
 입력 타이밍:
 
-- shell command는 shell 시작 후 500ms fallback timer로도 입력합니다.
-- slash command는 provider ready 감지 후 350ms 뒤 입력합니다.
+- shell command는 PowerShell prompt가 보인 뒤 500ms 후 입력합니다. prompt가 보이기 전에는 fallback으로 먼저 입력하지 않습니다.
+- slash command는 provider ready 감지 후 Claude 500ms, Codex 1000ms, Gemini 800ms 뒤 입력합니다.
 - Claude는 기본 command delay 6초를 사용합니다.
-- Codex와 Gemini는 최소 10초 뒤 slash command fallback 입력을 예약합니다. ready 감지가 느리거나 prompt 문자열이 바뀌어도 수집을 시도하기 위한 장치입니다. Codex는 fallback 시점에도 `Booting MCP server` 또는 `model: loading`만 보이면 `/status` 입력을 1초씩 늦춥니다.
+- Codex와 Gemini는 최소 10초 뒤 slash command fallback 입력을 예약합니다. ready 감지가 느리거나 prompt 문자열이 바뀌어도 수집을 시도하기 위한 장치입니다. Codex는 fallback 시점에도 `Booting MCP server` 또는 `model: loading`만 보이면 capture timeout까지 `/status` 입력을 1초씩 늦춥니다.
 - Codex는 `/status` 입력 후 400ms 뒤 Enter를 한 번 더 보내 command 선택/확정을 보완합니다.
 - Gemini는 `/model`이 prompt에 남아 있고 `Select Model`/`Model usage` 화면이 아직 안 보이면 Enter를 반복 확인합니다. 첫 확인은 800ms 뒤이고, 이후 2초 간격으로 Gemini capture timeout 10초 전까지 계속합니다. 첫 startup/auth redraw가 길 때 `/model`이 입력줄에 남은 채 멈추는 케이스를 줄이기 위한 처리입니다.
 
@@ -581,6 +582,8 @@ event payload:
 - refresh API는 장시간 수집 때문에 브라우저 요청이 막히지 않도록 cached payload를 먼저 반환할 수 있습니다.
 - parser가 값을 찾지 못하면 provider message에 원인을 담습니다.
 - 프론트엔드는 서버 요청 실패 시 `localStorage` cache를 fallback으로 사용합니다.
+
+문제 좁히기 체크리스트와 수정 노트는 [fix_check.md](fix_check.md)에 유지합니다.
 
 collector 로그의 marker 의미:
 

@@ -80,6 +80,7 @@ CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architec
 ## 문서
 
 - [Architecture](docs/architecture.md): 구현 구조, API contract, refresh/cache 동작, 운영 메모
+- [Fix Checklist](docs/fix_check.md): 오류 발생 시 밑단부터 좁히는 진단 체크리스트
 - [HTML Overview](docs/ai_dash.html): 브라우저에서 바로 열 수 있는 공유용 문서
 
 ## 데이터

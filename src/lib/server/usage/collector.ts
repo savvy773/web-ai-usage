@@ -14,7 +14,7 @@ const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
 const MAX_COLLECTION_ATTEMPTS = 3;
 const COLLECTION_RETRY_DELAY_MS = 1500;
-const CODEX_FALLBACK_READY_WAIT_MS = 25_000;
+const SHELL_READY_POLL_MS = 500;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
@@ -49,12 +49,13 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		}
 
 		const diagnostics = buildCollectionDiagnostics(provider.id, output, latestResult);
+		const transientStartupMiss = isTransientStartupMiss(provider.id, diagnostics);
 		await writeCollectorDebugSnapshot(provider.id, output, latestResult, {
 			attempt,
 			maxAttempts: MAX_COLLECTION_ATTEMPTS,
 			markers: diagnostics.markers,
 			parseDiagnostics: diagnostics.parseDetails,
-			writeFailureCopy: latestResult.status !== 'ok'
+			writeFailureCopy: latestResult.status !== 'ok' && !transientStartupMiss
 		}).catch(() => undefined);
 
 		if (latestResult.status === 'ok') {
@@ -69,9 +70,17 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		const details = describeCollectionResult(diagnostics);
 
 		if (attempt < MAX_COLLECTION_ATTEMPTS) {
-			console.info(
-				`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(COLLECTION_RETRY_DELAY_MS)}. ${details}`
-			);
+			if (transientStartupMiss) {
+				if (DEBUG_COLLECTOR_LOGS) {
+					console.info(
+						`[collector] ${provider.name} startup redraw only on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}; retrying in ${formatDuration(COLLECTION_RETRY_DELAY_MS)}. ${details}`
+					);
+				}
+			} else {
+				console.info(
+					`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(COLLECTION_RETRY_DELAY_MS)}. ${details}`
+				);
+			}
 			await delay(COLLECTION_RETRY_DELAY_MS);
 		} else {
 			console.warn(
@@ -111,7 +120,6 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 		let settled = false;
 		let wroteCommand = false;
 		let wroteSlashCommand = false;
-		let slashFallbackStartedAt: number | null = null;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		const timers = new Set<NodeJS.Timeout>();
@@ -179,6 +187,15 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 			safeWrite(`${command}\r`, 'Failed to write CLI command.');
 		};
 
+		const writeCommandWhenShellReady = () => {
+			if (wroteCommand) return;
+			if (!isShellReady(output)) {
+				schedule(writeCommandWhenShellReady, SHELL_READY_POLL_MS);
+				return;
+			}
+			schedule(writeCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs);
+		};
+
 		const writeSlashCommand = () => {
 			if (wroteSlashCommand) return;
 			wroteSlashCommand = true;
@@ -209,15 +226,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 
 		const writeSlashCommandFallback = () => {
 			if (wroteSlashCommand) return;
-			if (providerId === 'codex') {
-				slashFallbackStartedAt ??= performance.now();
-			}
-			if (
-				providerId === 'codex' &&
-				shouldWaitForCodexReady(output) &&
-				performance.now() - (slashFallbackStartedAt ?? performance.now()) <
-					CODEX_FALLBACK_READY_WAIT_MS
-			) {
+			if (providerId === 'codex' && shouldWaitForCodexReady(output)) {
 				schedule(writeSlashCommandFallback, 1000);
 				return;
 			}
@@ -232,7 +241,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 			}
 
 			if (wroteCommand && !wroteSlashCommand && isCliReady(providerId, output)) {
-				slashReadyTimer ??= schedule(writeSlashCommand, 350);
+				slashReadyTimer ??= schedule(writeSlashCommand, slashReadySettleMs(providerId));
 			}
 
 			if (wroteSlashCommand && hasUsageOutput(providerId, output)) {
@@ -246,7 +255,7 @@ async function runPtySlashCommand(providerId: ProviderId, command: string, slash
 
 		terminal.onExit(() => finish(output));
 
-		schedule(writeCommand, CLI_COLLECTION_CONFIG.shellCommandDelayMs);
+		writeCommandWhenShellReady();
 		schedule(
 			writeSlashCommandFallback,
 			CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
@@ -326,6 +335,12 @@ function captureTimeoutMs(providerId: ProviderId) {
 function usageOutputSettleMs(providerId: ProviderId) {
 	if (providerId === 'gemini') return 3000;
 	return USAGE_OUTPUT_SETTLE_MS;
+}
+
+function slashReadySettleMs(providerId: ProviderId) {
+	if (providerId === 'codex') return 1000;
+	if (providerId === 'gemini') return 800;
+	return 500;
 }
 
 function escapeRegExp(value: string) {
@@ -433,12 +448,13 @@ function buildCollectionDiagnostics(
 	const markers = usageMarkers(providerId, lines);
 	const parseDetails = parseDiagnostics(providerId, markers, result);
 
-	return { output, lines, markers, parseDetails, result };
+	return { output, rawOutputLength: rawOutput.length, lines, markers, parseDetails, result };
 }
 
 function describeCollectionResult(diagnostics: ReturnType<typeof buildCollectionDiagnostics>) {
 	const detail = [
 		`output=${diagnostics.output.length} chars/${diagnostics.lines.length} lines`,
+		`raw=${diagnostics.rawOutputLength} chars`,
 		`markers=${diagnostics.markers.length > 0 ? diagnostics.markers.join(',') : 'none'}`
 	];
 	detail.push(...diagnostics.parseDetails);
@@ -451,6 +467,14 @@ function describeCollectionResult(diagnostics: ReturnType<typeof buildCollection
 }
 
 function parseDiagnostics(providerId: ProviderId, markers: string[], result: ProviderUsage) {
+	if (providerId === 'codex') {
+		if (result.status === 'ok') return [];
+		const missing = [];
+		if (!markers.includes('5h-limit')) missing.push('5h-limit');
+		if (!markers.includes('week-limit')) missing.push('week-limit');
+		return missing.length > 0 ? [`parse-failure=missing ${missing.join(',')}`] : [];
+	}
+
 	if (providerId !== 'gemini') return [];
 
 	const parsedLabels = result.modelUsages.map((usage) => usage.label);
@@ -537,6 +561,22 @@ function isGeminiUsageRowCandidate(rawLine: string, normalizedLine: string) {
 			isStructuredGeminiBarUsageRow(rawLine, normalizedLine)) &&
 		(GEMINI_BAR_RUN_PATTERN.test(rawLine) || /\d+(?:\.\d+)?\s*%/.test(normalizedLine))
 	);
+}
+
+function isTransientStartupMiss(
+	providerId: ProviderId,
+	diagnostics: ReturnType<typeof buildCollectionDiagnostics>
+) {
+	if (providerId !== 'codex') return false;
+	if (diagnostics.result.status === 'ok') return false;
+	if (diagnostics.markers.length > 0) return false;
+	if (diagnostics.rawOutputLength < 10_000) return false;
+	if (diagnostics.lines.length > 2) return false;
+	if (/\/status|5h\s+limit|weekly\s+limit|gpt-[^\r\n]+ · [A-Z]:\\/i.test(diagnostics.output)) {
+		return false;
+	}
+
+	return true;
 }
 
 function isStructuredGeminiBarUsageRow(rawLine: string, normalizedLine: string) {
