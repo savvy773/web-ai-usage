@@ -100,6 +100,7 @@ Weekly limit: [████████████████░░░░] 82%
 중요: Codex의 `left`는 남은 양입니다. Dashboard는 모든 provider를 used percent로 표시하므로 `92% left`는 `8% used`로 변환합니다.
 Codex는 `5h limit`와 `Weekly limit` row가 모두 있어야 성공으로 봅니다. `100% context left` 같은 일반 상태줄은 usage row가 아니므로 current/week 값으로 쓰지 않습니다.
 첫 pty attempt가 Codex MCP boot redraw만 캡처하고 usage row 없이 끝나는 경우가 있습니다. 이때는 `markers=none`, raw output은 크지만 정규화 후 line 수가 거의 없는 형태입니다. Collector는 이 케이스를 startup transient로 보고 일반 retry 로그와 `last-failure` 덮어쓰기를 생략한 뒤 다음 attempt를 진행합니다.
+Codex가 `/status`에 `Limits: refresh requested; run /status again shortly.`로 응답하면 사용량 row가 아직 준비되지 않은 상태입니다. Collector는 같은 pty 세션에서 3초 간격으로 `/status`를 최대 4번 다시 요청해 90초 timeout을 새 attempt로 낭비하지 않습니다.
 
 ### Claude `/usage`
 
@@ -135,19 +136,21 @@ provider별 CLI 수집은 순차로 실행됩니다. 각 provider는 실패 시 
 
 현재 주요 설정:
 
-| 항목                      | 값                             |
-| ------------------------- | ------------------------------ |
-| CLI working directory     | `D:\Code\_temp`                |
-| shell                     | `pwsh.exe`                     |
-| capture timeout           | 1-2회차: 45초, Codex 90초, Gemini 105초 |
-| patient capture timeout   | 3-5회차: 60초, Codex 120초, Gemini 135초 |
-| collector retry delay     | 1.5초, 5초, 5초, 10초          |
-| history bucket interval   | 10분                           |
-| prefetch lead time        | 30초 전                        |
-| quick refresh wait        | 2초                            |
-| frontend polling interval | 1.5초                          |
-| frontend polling attempts | 24회                           |
-| manual refresh cooldown   | 10초                           |
+| 항목                      | 값                                          |
+| ------------------------- | ------------------------------------------- |
+| CLI working directory     | `D:\Code\_temp`                             |
+| shell                     | `pwsh.exe`                                  |
+| capture timeout           | 1-2회차: 45초, Codex 90초, Gemini 105초     |
+| patient capture timeout   | 3-5회차: 60초, Codex 120초, Gemini 135초    |
+| collector retry delay     | 1.5초, 5초, 5초, 10초                       |
+| Codex same-session retry  | refresh requested 응답 후 3초 간격 최대 4회 |
+| slash reissue guard       | ready prompt 복귀 후 5초 간격 최대 3회      |
+| history bucket interval   | 10분                                        |
+| prefetch lead time        | 30초 전                                     |
+| quick refresh wait        | 2초                                         |
+| frontend polling interval | 1.5초                                       |
+| frontend polling attempts | 24회                                        |
+| manual refresh cooldown   | 10초                                        |
 
 ## CLI 실행 방식
 
@@ -184,6 +187,9 @@ ready 감지:
 - Claude는 기본 command delay 6초를 사용합니다.
 - Codex와 Gemini는 최소 10초 뒤 slash command fallback 입력을 예약합니다. ready 감지가 느리거나 prompt 문자열이 바뀌어도 수집을 시도하기 위한 장치입니다. Codex는 fallback 시점에도 `Booting MCP server` 또는 `model: loading`만 보이면 capture timeout까지 `/status` 입력을 1초씩 늦춥니다.
 - Codex는 `/status` 입력 후 400ms 뒤 Enter를 한 번 더 보내 command 선택/확정을 보완합니다.
+- Codex가 `/status` 뒤 `refresh requested`를 반환하면 같은 세션에서 3초 뒤 `/status`를 다시 입력합니다.
+- Gemini fallback은 `Waiting for authentication...` 화면에서는 `/model`을 소모하지 않고 ready prompt가 뜰 때까지 1초씩 늦춥니다.
+- Codex/Gemini가 slash command를 이미 보냈는데 ready prompt로 돌아왔고 usage 화면이 없으면 slash command가 TUI redraw/auth 상태에 소실된 것으로 보고 같은 세션에서 5초 뒤 최대 3번 다시 입력합니다.
 - Gemini는 `/model`이 prompt에 남아 있고 `Select Model`/`Model usage` 화면이 아직 안 보이면 Enter를 반복 확인합니다. 첫 확인은 800ms 뒤이고, 이후 2초 간격으로 Gemini capture timeout 10초 전까지 계속합니다. 첫 startup/auth redraw가 길 때 `/model`이 입력줄에 남은 채 멈추는 케이스를 줄이기 위한 처리입니다.
 
 완료 판단:
@@ -382,7 +388,7 @@ Pace card:
 - `data/usage-history.json`: usage history의 영구 저장 파일입니다. dashboard가 실제로 읽고 쓰는 핵심 JSON입니다.
 - `data/usage-latest.json`: 화면/API payload 형태를 그대로 저장하되 `history`는 최근 6개 bucket만 포함합니다. UI에 뿌려지는 데이터 확인용 파일입니다.
 - `data/raw/{provider}-latest.txt`: provider별 마지막 CLI raw output tail입니다. 파싱 오류가 나면 이 파일에서 실제 TUI 출력이 어떻게 들어왔는지 먼저 확인합니다.
-- `data/raw/{provider}-latest.parsed.json`: raw tail과 함께 저장되는 provider별 파싱 결과 snapshot입니다. `status`, `message`, `windows`, `modelUsages`, `rawOutputChars`를 확인합니다.
+- `data/raw/{provider}-latest.parsed.json`: raw tail과 함께 저장되는 provider별 파싱 결과 snapshot입니다. `status`, `message`, `phase`, `markers`, `parseDiagnostics`, `windows`, `modelUsages`, `rawOutputChars`를 확인합니다.
 - `data/raw/{provider}-last-failure.txt`: 마지막 실패/partial attempt raw입니다. 이후 성공 attempt가 `latest`를 덮어써도 실패 원인을 재검토할 수 있습니다.
 - `data/raw/{provider}-last-failure.parsed.json`: 실패 attempt의 marker와 parse diagnostics를 포함한 snapshot입니다.
 - `data/logs/server.log`: 서버 console log 전체를 append합니다.
@@ -414,6 +420,7 @@ Pace card:
 - 실패/partial attempt는 `{provider}-last-failure.txt`와 `{provider}-last-failure.parsed.json`에도 별도 보존합니다.
 - `*-latest.txt`는 terminal escape가 제거되지 않은 raw tail입니다. TUI redraw, `\r`, box/bar 문자가 실제로 어떻게 들어왔는지 확인할 때 씁니다.
 - `*-latest.parsed.json`은 같은 attempt에서 parser가 만든 결과입니다. raw와 파싱 결과를 나란히 비교할 수 있습니다.
+- `phase`는 collector가 실패 위치를 좁히기 위해 만든 현재 단계입니다. 사람이 한 화면으로 보는 CLI output도 raw에서는 auth spinner, prompt redraw, slash command buffer, usage panel, 하단 status row가 섞이므로 `phase -> markers -> rawPreview/raw tail` 순서로 확인합니다.
 - raw 파일은 민감할 수 있으므로 Git에 올리지 않습니다.
 
 저장 시 주의점:
@@ -589,6 +596,16 @@ event payload:
 
 collector 로그의 marker 의미:
 
+- `phase=usage-output-complete`: usage 값이 완성되어 parser가 `ok`를 만들 수 있는 상태입니다.
+- `phase=codex-loading`: Codex가 아직 `Booting MCP server` 또는 `model: loading` 상태입니다. `/status`를 강제로 넣으면 command가 소실되거나 partial이 됩니다.
+- `phase=codex-ready-without-status-command`: Codex prompt는 돌아왔지만 `/status` 결과가 없습니다. 같은 세션 slash reissue guard가 `/status`를 다시 넣어야 합니다.
+- `phase=codex-status-refresh-pending`: `/status`가 실행됐지만 Codex가 `refresh requested`만 반환했습니다. 같은 세션에서 `/status`를 다시 요청해야 합니다.
+- `phase=codex-status-output-without-limits`: `/status` panel은 보이지만 `5h limit`/`Weekly limit` row가 없습니다. provider 응답 형상 변경 또는 아직 준비되지 않은 화면입니다.
+- `phase=gemini-auth-wait`: Gemini authentication spinner입니다. 이 상태에서는 `/model` fallback을 소모하지 않습니다.
+- `phase=gemini-ready-without-model-command`: Gemini prompt는 준비됐지만 `/model`이 입력된 흔적이 없습니다. slash reissue guard가 `/model`을 다시 넣어야 합니다.
+- `phase=gemini-ready-without-model-screen`: Gemini 하단 quota/status는 보이지만 `Model usage` 화면이 없습니다. parser 문제가 아니라 command/confirmation/timing 문제입니다.
+- `phase=gemini-slash-buffer-waiting`: `/model`이 입력줄에 남아 있습니다. Enter confirmation과 settle timing을 봅니다.
+- `phase=gemini-model-screen-incomplete`: `Model usage` 화면은 보이지만 model row/reset 조합이 부족합니다. 이때는 parser row 결합과 redraw normalization을 봅니다.
 - Gemini `markers=model-screen,model-name,bar-row,percent,reset-word,percent-reset`: usage 화면, 모델명, bar row, percent, reset text가 모두 보입니다. 이 상태에서 실패하면 parser row 결합이나 label 정규화 문제를 먼저 봅니다.
 - Gemini `markers=slash-buffer,quota-percent`: `/model`이 입력줄에 남아 있고 하단 quota percent만 보이는 상태입니다. 모델 usage 화면이 아직 열리지 않은 수집 타이밍 문제를 먼저 봅니다.
 - Gemini `markers=model-name,bar-row,percent`: 모델 usage row의 모델명과 bar/percent는 보이지만 reset text가 같은 row로 복구되지 않았을 수 있습니다.

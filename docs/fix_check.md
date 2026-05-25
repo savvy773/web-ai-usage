@@ -10,6 +10,13 @@
 - raw에는 값이 있는데 parser가 놓친 것인지, raw 자체에 값이 없는 collector timing 문제인지 구분합니다.
 - JSON은 정상인데 화면만 이상한 UI 문제인지 마지막에 확인합니다.
 
+## 왜 반복적으로 헷갈리는가
+
+- 사람은 최종 TUI 화면 한 장을 봅니다.
+- collector는 PTY raw stream을 봅니다. 여기에는 auth spinner, cursor movement, 화면 지우기, prompt redraw, slash command 입력줄, usage panel, 하단 quota/status row가 시간순으로 섞입니다.
+- 따라서 사람이 보기에는 같은 화면이어도 raw에서는 `command가 아직 안 들어감`, `command가 입력줄에 남음`, `command가 소실됨`, `usage panel이 열렸지만 row가 덜 그려짐`, `provider가 refresh requested만 반환함`이 서로 다른 상태입니다.
+- 재발 시 regex부터 고치지 말고 `phase -> markers -> parseDiagnostics -> rawPreview/raw tail` 순서로 원인을 좁힙니다.
+
 ## 밑단부터 좁히는 순서
 
 1. Terminal readiness
@@ -29,7 +36,7 @@
 
 4. Raw capture
    - `data/raw/{provider}-latest.txt`에서 실제 terminal output이 충분히 남았는지 봅니다.
-   - `data/raw/{provider}-latest.parsed.json`에서 `rawOutputChars`, `rawTailChars`, `attempt`, `markers`, `parseDiagnostics`를 확인합니다.
+   - `data/raw/{provider}-latest.parsed.json`에서 `rawOutputChars`, `rawTailChars`, `attempt`, `phase`, `markers`, `parseDiagnostics`를 확인합니다.
    - 실패 attempt는 `data/raw/{provider}-last-failure.txt`와 `.parsed.json`을 봅니다.
 
 5. Parser boundary
@@ -45,6 +52,33 @@
 
 ## 증상별 다음 확인
 
+- `phase=codex-loading`
+  - Codex startup/readiness 문제입니다. `/status`를 더 빨리 넣지 말고 ready prompt 판별을 봅니다.
+
+- `phase=codex-ready-without-status-command`
+  - prompt는 돌아왔지만 `/status` 결과가 없습니다. slash command가 TUI redraw 중 소실된 케이스로 보고 same-session slash reissue guard를 봅니다.
+
+- `phase=codex-status-refresh-pending`
+  - `/status`가 실행됐지만 `refresh requested`만 받은 상태입니다. 같은 세션에서 `/status`를 재입력해야 합니다.
+
+- `phase=codex-status-output-without-limits`
+  - `/status` panel은 보이지만 limit row가 없습니다. provider 응답 형상 변경인지, 아직 refresh pending인지 raw를 봅니다.
+
+- `phase=gemini-auth-wait`
+  - Gemini auth spinner 상태입니다. 이때 `/model` fallback이 소모되면 안 됩니다.
+
+- `phase=gemini-ready-without-model-command`
+  - Gemini prompt가 준비됐지만 `/model` 입력 흔적이 없습니다. same-session slash reissue guard를 봅니다.
+
+- `phase=gemini-ready-without-model-screen`
+  - 하단 quota/status만 보이고 `Model usage` 화면이 없습니다. parser 문제가 아니라 `/model` 입력/confirmation/timing 문제입니다.
+
+- `phase=gemini-slash-buffer-waiting`
+  - `/model`이 입력줄에 남아 있습니다. Enter confirmation 반복과 settle timing을 봅니다.
+
+- `phase=gemini-model-screen-incomplete`
+  - `Model usage` 화면은 열렸지만 row/reset 결합이 부족합니다. parser normalization과 panel boundary를 봅니다.
+
 - `markers=none`
   - raw에 usage 화면이 없는지 먼저 확인합니다.
   - raw가 boot/progress redraw뿐이면 collector readiness/timing 문제입니다.
@@ -52,6 +86,7 @@
 
 - Codex first-attempt partial
   - raw가 크고 정규화 후 line 수가 거의 없으며 `Booting MCP server` redraw만 있으면 startup transient입니다.
+  - raw에 `Limits: refresh requested; run /status again shortly.`가 있으면 같은 세션에서 `/status`를 다시 입력해야 합니다.
   - 이 경우 먼저 terminal/CLI readiness 대기 시간을 봅니다.
   - 기본 로그에 반복 노출되면 transient 분류가 새 raw shape를 놓친 것입니다.
 
@@ -61,6 +96,7 @@
 
 - Gemini `quota-percent`
   - `model-screen` 없이 `quota-percent`만 있으면 `/model` 화면이 아직 안 열린 상태입니다.
+  - raw tail에 `Waiting for authentication...` 뒤 ready prompt가 보이면 `/model` fallback이 auth 중에 소모된 케이스입니다.
   - parser regex보다 `/model` confirmation, wait, settle 조건을 먼저 봅니다.
 
 - Gemini `parsed-models=1/3` 또는 `missing reset-word`
@@ -88,6 +124,19 @@
 - 조치: 3회차부터 capture timeout을 더 길게 적용. Codex는 120초, Gemini는 135초까지 대기.
 - 조치: retry delay를 1.5초, 5초, 5초, 10초 cadence로 변경.
 - 다음에 볼 것: `attempt 3/5` 이후에도 실패하면 `last-failure` raw에서 usage row 부재와 parser miss를 먼저 분리합니다.
+
+### 2026-05-24: Same-session slash retry fixes
+
+- 원인: Codex `/status`가 `Limits: refresh requested; run /status again shortly.`를 반환하면 기존 코드는 같은 세션에서 다시 요청하지 않고 timeout까지 기다렸습니다.
+- 조치: Codex refresh requested 응답 뒤 3초 간격으로 같은 세션에서 `/status`를 최대 4번 재입력.
+- 원인: Gemini auth 대기 화면에서 `/model` fallback이 먼저 소모되면 prompt가 늦게 떠도 다시 입력하지 않았습니다.
+- 조치: Gemini `Waiting for authentication...` 중에는 fallback `/model` 입력을 1초씩 늦춤.
+
+### 2026-05-24: Phase diagnostics and slash reissue guard
+
+- 원인: 사람은 최종 화면을 보지만 collector는 중간 redraw stream을 보므로, 실패 로그가 `missing ...`만 말하면 command 소실과 parser miss를 구분하기 어렵습니다.
+- 조치: collector snapshot/log에 `phase`를 추가해 readiness, slash-buffer, refresh-pending, model-screen-incomplete를 먼저 분리.
+- 조치: Codex/Gemini가 ready prompt로 돌아왔는데 usage 화면과 slash buffer가 없으면 slash command가 소실된 것으로 보고 같은 세션에서 5초 간격으로 최대 3번 재입력.
 
 ## 수정 후 검증
 

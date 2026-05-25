@@ -8,6 +8,7 @@ const MAX_RAW_CHARS = 40_000;
 type CollectorDebugSnapshotOptions = {
 	attempt?: number;
 	maxAttempts?: number;
+	phase?: string;
 	markers?: string[];
 	parseDiagnostics?: string[];
 	writeFailureCopy?: boolean;
@@ -33,6 +34,7 @@ export async function writeCollectorDebugSnapshot(
 		rawTailChars: rawTail.length,
 		attempt: options.attempt ?? null,
 		maxAttempts: options.maxAttempts ?? null,
+		phase: options.phase ?? null,
 		markers: options.markers ?? [],
 		parseDiagnostics: options.parseDiagnostics ?? [],
 		windows: result.windows,

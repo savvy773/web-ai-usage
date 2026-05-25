@@ -18,6 +18,10 @@ const STANDARD_RETRY_DELAY_MS = 1500;
 const PATIENT_RETRY_DELAY_MS = 5000;
 const FINAL_RETRY_DELAY_MS = 10_000;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
+const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 3000;
+const MAX_CODEX_STATUS_REFRESH_RETRIES = 4;
+const SLASH_REISSUE_DELAY_MS = 5000;
+const MAX_SLASH_REISSUES = 3;
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
 const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
@@ -55,6 +59,7 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		await writeCollectorDebugSnapshot(provider.id, output, latestResult, {
 			attempt,
 			maxAttempts: MAX_COLLECTION_ATTEMPTS,
+			phase: diagnostics.phase,
 			markers: diagnostics.markers,
 			parseDiagnostics: diagnostics.parseDetails,
 			writeFailureCopy: latestResult.status !== 'ok' && !transientStartupMiss
@@ -133,8 +138,12 @@ async function runPtySlashCommand(
 		let settled = false;
 		let wroteCommand = false;
 		let wroteSlashCommand = false;
+		let codexStatusRefreshRetryCount = 0;
+		let slashReissueCount = 0;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
+		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
+		let slashReissueTimer: NodeJS.Timeout | undefined;
 		const timers = new Set<NodeJS.Timeout>();
 
 		const schedule = (callback: () => void, ms: number) => {
@@ -212,6 +221,10 @@ async function runPtySlashCommand(
 		const writeSlashCommand = () => {
 			if (wroteSlashCommand) return;
 			wroteSlashCommand = true;
+			writeSlashCommandNow();
+		};
+
+		const writeSlashCommandNow = () => {
 			safeWrite(`${slashCommand}\r`, 'Failed to write slash command.');
 			if (providerId === 'codex') {
 				schedule(() => safeWrite('\r', 'Failed to confirm slash command.'), 400);
@@ -243,7 +256,42 @@ async function runPtySlashCommand(
 				schedule(writeSlashCommandFallback, 1000);
 				return;
 			}
+			if (providerId === 'gemini' && shouldWaitForGeminiReady(output)) {
+				schedule(writeSlashCommandFallback, 1000);
+				return;
+			}
 			writeSlashCommand();
+		};
+
+		const retryCodexStatusAfterRefresh = () => {
+			if (settled || providerId !== 'codex') return;
+			if (!wroteSlashCommand || hasUsageOutput(providerId, output)) return;
+			if (!hasCodexStatusRefreshRequested(output)) return;
+			if (codexStatusRefreshRetryTimer) return;
+			if (codexStatusRefreshRetryCount >= MAX_CODEX_STATUS_REFRESH_RETRIES) return;
+
+			codexStatusRefreshRetryTimer = schedule(() => {
+				codexStatusRefreshRetryTimer = undefined;
+				if (settled || hasUsageOutput(providerId, output)) return;
+				codexStatusRefreshRetryCount += 1;
+				writeSlashCommandNow();
+			}, CODEX_STATUS_REFRESH_RETRY_DELAY_MS);
+		};
+
+		const reissueSlashCommandIfLost = () => {
+			if (settled || !wroteSlashCommand || hasUsageOutput(providerId, output)) return;
+			if (slashReissueTimer) return;
+			if (slashReissueCount >= MAX_SLASH_REISSUES) return;
+			if (!shouldReissueSlashCommand(providerId, output, slashCommand)) return;
+
+			slashReissueTimer = schedule(() => {
+				slashReissueTimer = undefined;
+				if (settled || hasUsageOutput(providerId, output)) return;
+				if (!shouldReissueSlashCommand(providerId, output, slashCommand)) return;
+
+				slashReissueCount += 1;
+				writeSlashCommandNow();
+			}, SLASH_REISSUE_DELAY_MS);
 		};
 
 		terminal.onData((chunk) => {
@@ -264,6 +312,9 @@ async function runPtySlashCommand(
 				}
 				usageSettleTimer = schedule(() => finish(output), usageOutputSettleMs(providerId));
 			}
+
+			retryCodexStatusAfterRefresh();
+			reissueSlashCommandIfLost();
 		});
 
 		terminal.onExit(() => finish(output));
@@ -325,6 +376,43 @@ function shouldWaitForCodexReady(output: string) {
 	if (isCodexReadyTail(tail)) return false;
 
 	return /booting\s+mcp\s+server|model:\s*loading|Use \/skills/i.test(tail);
+}
+
+function shouldWaitForGeminiReady(output: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	if (isCliReady('gemini', output)) return false;
+
+	return /waiting for authentication/i.test(tail);
+}
+
+function shouldReissueSlashCommand(providerId: ProviderId, output: string, slashCommand: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	if (!isCliReady(providerId, output)) return false;
+	if (hasVisibleSlashBuffer(tail, slashCommand)) return false;
+
+	if (providerId === 'codex') {
+		return (
+			!hasCodexStatusRefreshRequested(output) &&
+			!/5h\s+limit|weekly\s+limit|visit\s+https:\/\/chatgpt\.com\/codex\/settings\/usage/i.test(
+				tail
+			)
+		);
+	}
+
+	if (providerId === 'gemini') {
+		return !hasGeminiModelScreenText(tail);
+	}
+
+	return false;
+}
+
+function hasVisibleSlashBuffer(value: string, slashCommand: string) {
+	return new RegExp(`(?:^|\\n)[^\\n]*>\\s*${escapeRegExp(slashCommand)}\\b`, 'i').test(value);
+}
+
+function hasCodexStatusRefreshRequested(output: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	return /Limits:\s*refresh requested;\s*run \/status again shortly/i.test(tail);
 }
 
 function latestCodexLoadingIndex(tail: string) {
@@ -475,14 +563,16 @@ function buildCollectionDiagnostics(
 		.filter(Boolean);
 	const markers = usageMarkers(providerId, lines);
 	const parseDetails = parseDiagnostics(providerId, markers, result);
+	const phase = collectionPhase(providerId, output, markers, result);
 
-	return { output, rawOutputLength: rawOutput.length, lines, markers, parseDetails, result };
+	return { output, rawOutputLength: rawOutput.length, lines, markers, parseDetails, phase, result };
 }
 
 function describeCollectionResult(diagnostics: ReturnType<typeof buildCollectionDiagnostics>) {
 	const detail = [
 		`output=${diagnostics.output.length} chars/${diagnostics.lines.length} lines`,
 		`raw=${diagnostics.rawOutputLength} chars`,
+		`phase=${diagnostics.phase}`,
 		`markers=${diagnostics.markers.length > 0 ? diagnostics.markers.join(',') : 'none'}`
 	];
 	detail.push(...diagnostics.parseDetails);
@@ -494,9 +584,43 @@ function describeCollectionResult(diagnostics: ReturnType<typeof buildCollection
 	return `(${detail.join('; ')})`;
 }
 
+function collectionPhase(
+	providerId: ProviderId,
+	output: string,
+	markers: string[],
+	result: ProviderUsage
+) {
+	if (result.status === 'ok') return 'usage-output-complete';
+
+	if (providerId === 'codex') {
+		if (markers.includes('status-refresh-requested')) return 'codex-status-refresh-pending';
+		if (shouldWaitForCodexReady(output)) return 'codex-loading';
+		if (/\/status/i.test(output)) return 'codex-status-output-without-limits';
+		if (isCliReady('codex', output)) return 'codex-ready-without-status-command';
+		return 'codex-startup-or-redraw';
+	}
+
+	if (providerId === 'gemini') {
+		if (/waiting for authentication/i.test(output)) return 'gemini-auth-wait';
+		if (markers.includes('model-screen')) return 'gemini-model-screen-incomplete';
+		if (markers.includes('slash-buffer')) return 'gemini-slash-buffer-waiting';
+		if (isCliReady('gemini', output) && markers.includes('quota-percent')) {
+			return 'gemini-ready-without-model-screen';
+		}
+		if (isCliReady('gemini', output)) return 'gemini-ready-without-model-command';
+		return 'gemini-startup-or-redraw';
+	}
+
+	if (isCliReady(providerId, output)) return `${providerId}-ready-without-usage-output`;
+	return `${providerId}-startup-or-redraw`;
+}
+
 function parseDiagnostics(providerId: ProviderId, markers: string[], result: ProviderUsage) {
 	if (providerId === 'codex') {
 		if (result.status === 'ok') return [];
+		if (markers.includes('status-refresh-requested')) {
+			return ['parse-failure=status refresh requested; /status should be retried'];
+		}
 		const missing = [];
 		if (!markers.includes('5h-limit')) missing.push('5h-limit');
 		if (!markers.includes('week-limit')) missing.push('week-limit');
@@ -549,6 +673,11 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 			normalizedLines.some((line) => /(?:^|[│\s])5h\s+limit\s*:/i.test(line)) ? '5h-limit' : null,
 			normalizedLines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line))
 				? 'week-limit'
+				: null,
+			normalizedLines.some((line) =>
+				/Limits:\s*refresh requested;\s*run \/status again shortly/i.test(line)
+			)
+				? 'status-refresh-requested'
 				: null
 		].filter((marker): marker is string => marker !== null);
 	}
