@@ -7,25 +7,26 @@
   <meta name="description" content="Monitor Claude, Codex, and Gemini CLI usage in one local dashboard." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..900;1,14..32,300..900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #05070f;
-      --bg2:      #080c18;
-      --surface:  #0d1120;
-      --surface2: #121828;
-      --surface3: #171e30;
-      --border:   rgba(255,255,255,0.06);
-      --border2:  rgba(255,255,255,0.1);
-      --text:     #eef0f6;
-      --text2:    #9ba3b6;
-      --muted:    #4b5368;
+      --bg:       #060912;
+      --bg2:      #090d1a;
+      --surface:  #0d1222;
+      --surface2: #111827;
+      --surface3: #1a2236;
+      --border:   rgba(255,255,255,0.07);
+      --border2:  rgba(255,255,255,0.13);
+      --text:     #f0f2f8;
+      --text2:    #a8b2c8;
+      --muted:    #5c6b85;
       --violet:   #7c6aff;
+      --violet2:  #9d8fff;
       --cyan:     #22d3ee;
       --purple:   #a855f7;
-      --orange:   #f97316;
+      --orange:   #fb923c;
       --green:    #34d399;
       --yellow:   #fbbf24;
     }
@@ -41,832 +42,617 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    /* ── GRID BACKGROUND ── */
-    .grid-bg {
+    /* ── GRID ── */
+    body::before {
+      content: '';
       position: fixed;
       inset: 0;
       pointer-events: none;
       z-index: 0;
       background-image:
-        linear-gradient(rgba(124,106,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(124,106,255,0.03) 1px, transparent 1px);
-      background-size: 60px 60px;
-      mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%);
+        linear-gradient(rgba(124,106,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(124,106,255,0.04) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse 100% 70% at 50% 0%, black 30%, transparent 100%);
     }
 
     /* ── AURORA ── */
-    .aurora {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 0;
-      overflow: hidden;
+    .aurora { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .ab {
+      position: absolute; border-radius: 50%; filter: blur(90px);
+      animation: adrift 20s ease-in-out infinite alternate;
     }
-
-    .aurora-blob {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.12;
-      animation: drift 18s ease-in-out infinite alternate;
-    }
-
-    .aurora-blob:nth-child(1) {
-      width: 700px; height: 500px;
-      background: var(--violet);
-      top: -15%; left: 20%;
-      animation-delay: 0s;
-    }
-    .aurora-blob:nth-child(2) {
-      width: 500px; height: 400px;
-      background: var(--cyan);
-      top: 10%; right: -5%;
-      opacity: 0.08;
-      animation-delay: -6s;
-    }
-    .aurora-blob:nth-child(3) {
-      width: 400px; height: 350px;
-      background: var(--purple);
-      top: 60%; left: -5%;
-      opacity: 0.07;
-      animation-delay: -12s;
-    }
-
-    @keyframes drift {
-      from { transform: translate(0, 0) scale(1); }
-      to   { transform: translate(40px, 30px) scale(1.08); }
+    .ab1 { width:800px;height:550px; background:var(--violet);   opacity:.1;  top:-10%; left:15%;      animation-delay:0s; }
+    .ab2 { width:550px;height:420px; background:var(--cyan);     opacity:.07; top:5%;   right:-8%;     animation-delay:-7s; }
+    .ab3 { width:450px;height:380px; background:var(--purple);   opacity:.06; top:55%;  left:-8%;      animation-delay:-14s; }
+    @keyframes adrift {
+      from { transform: translate(0,0) scale(1); }
+      to   { transform: translate(30px,25px) scale(1.06); }
     }
 
     /* ── NAV ── */
     nav {
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      z-index: 200;
-      height: 58px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      position: fixed; top:0; left:0; right:0; z-index:200;
+      height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
       padding: 0 clamp(1.25rem, 4vw, 2.5rem);
-      background: rgba(5,7,15,0.65);
-      backdrop-filter: blur(20px) saturate(1.4);
+      background: rgba(6,9,18,0.72);
+      backdrop-filter: blur(24px) saturate(1.5);
       border-bottom: 1px solid var(--border);
     }
 
     .nav-logo {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      text-decoration: none;
-      color: var(--text);
-      font-weight: 700;
-      font-size: 0.92rem;
-      letter-spacing: -0.02em;
-    }
-
-    .logo-icon {
-      width: 26px; height: 26px;
-      border-radius: 7px;
-      background: linear-gradient(135deg, var(--violet) 0%, var(--cyan) 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.7rem;
+      display: flex; align-items: center; gap: 0.6rem;
+      text-decoration: none; color: var(--text);
+      font-weight: 700; font-size: 0.92rem; letter-spacing: -0.02em;
       flex-shrink: 0;
     }
 
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 0.25rem;
-      list-style: none;
+    .logo-mark {
+      width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+      background: linear-gradient(135deg, #6d5bff 0%, #22d3ee 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.72rem; line-height: 1;
+      /* prevent the icon itself from clipping */
+      overflow: visible;
     }
 
+    .nav-links { display:flex; align-items:center; gap:0.2rem; list-style:none; }
     .nav-links a {
-      color: var(--text2);
-      text-decoration: none;
-      font-size: 0.84rem;
-      padding: 0.35rem 0.75rem;
-      border-radius: 7px;
-      transition: color 0.15s, background 0.15s;
+      color: var(--text2); text-decoration: none; font-size: 0.84rem;
+      padding: 0.35rem 0.8rem; border-radius: 7px;
+      transition: color .15s, background .15s;
     }
-
-    .nav-links a:hover {
-      color: var(--text);
-      background: rgba(255,255,255,0.05);
-    }
+    .nav-links a:hover { color:var(--text); background:rgba(255,255,255,.05); }
 
     .nav-gh {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: var(--surface2) !important;
-      border: 1px solid var(--border2) !important;
-      color: var(--text) !important;
-      padding: 0.35rem 0.85rem !important;
-      border-radius: 8px !important;
-      font-weight: 500 !important;
+      display:inline-flex; align-items:center; gap:0.4rem;
+      background:var(--surface2) !important; border:1px solid var(--border2) !important;
+      color:var(--text) !important; font-weight:500 !important;
+      border-radius:8px !important;
     }
 
     /* ── HERO ── */
     .hero {
-      position: relative;
-      z-index: 1;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+      position: relative; z-index: 1;
+      padding: clamp(7rem,12vw,9rem) clamp(1.25rem,5vw,3rem) 5rem;
+    }
+
+    .hero-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3.5rem;
       align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 9rem clamp(1.25rem, 5vw, 3rem) 6rem;
+    }
+
+    @media (max-width: 860px) {
+      .hero-inner { grid-template-columns: 1fr; text-align: center; }
+      .providers-row { justify-content: center; }
+      .hero-cta { justify-content: center; }
     }
 
     .hero-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      padding: 0.32rem 1rem;
-      border-radius: 999px;
-      border: 1px solid rgba(124,106,255,0.3);
-      background: rgba(124,106,255,0.07);
-      font-size: 0.76rem;
-      font-weight: 500;
-      color: #b8b0ff;
-      margin-bottom: 2rem;
-      letter-spacing: 0.02em;
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.3rem 0.95rem; border-radius: 999px;
+      border: 1px solid rgba(124,106,255,0.32);
+      background: rgba(124,106,255,0.08);
+      font-size: 0.75rem; font-weight: 500; color: #c4bcff;
+      margin-bottom: 1.6rem; letter-spacing: 0.02em;
     }
 
-    .badge-pulse {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--violet);
-      animation: glow-pulse 2.4s ease-in-out infinite;
+    .badge-dot {
+      width:6px; height:6px; border-radius:50%; background:var(--violet);
+      animation: gpulse 2.4s ease-in-out infinite;
+    }
+    @keyframes gpulse {
+      0%,100%{ opacity:1; box-shadow:0 0 0 0 rgba(124,106,255,.5); }
+      50%    { opacity:.6; box-shadow:0 0 0 5px rgba(124,106,255,0); }
     }
 
-    @keyframes glow-pulse {
-      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(124,106,255,0.6); }
-      50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(124,106,255,0); }
-    }
-
-    /* gradient text — padding prevents descender clipping */
-    .grad-text {
-      background: linear-gradient(135deg, #ffffff 0%, #c4bfff 45%, #22d3ee 100%);
+    /* gradient text — inline-block + padding-bottom prevents descender/bottom clip */
+    .gt {
+      background: linear-gradient(135deg, #fff 0%, #ccc8ff 40%, #67e8f9 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      display: inline-block;     /* shrink-wrap prevents overflow clipping */
-      padding-bottom: 0.12em;    /* prevent descender clip */
+      display: inline-block;
+      padding-bottom: 0.15em;
+      line-height: 1.12;
     }
 
     h1 {
-      font-size: clamp(2.8rem, 7vw, 5.5rem);
-      font-weight: 800;
-      letter-spacing: -0.045em;
-      line-height: 1.08;
-      margin-bottom: 1.4rem;
+      font-size: clamp(2.6rem, 5.5vw, 4.8rem);
+      font-weight: 800; letter-spacing: -0.045em;
+      margin-bottom: 1.3rem;
+      /* overflow must NOT be hidden here */
+      overflow: visible;
     }
 
     .hero-sub {
-      font-size: clamp(0.98rem, 1.8vw, 1.15rem);
-      color: var(--text2);
-      max-width: 540px;
-      margin: 0 auto 2.8rem;
-      line-height: 1.75;
+      font-size: clamp(0.95rem, 1.6vw, 1.08rem);
+      color: var(--text2); line-height: 1.78;
+      margin-bottom: 2.4rem; max-width: 460px;
     }
 
-    /* ── BUTTONS ── */
     .hero-cta {
-      display: flex;
-      gap: 0.85rem;
-      justify-content: center;
-      flex-wrap: wrap;
+      display: flex; gap: 0.85rem; flex-wrap: wrap; margin-bottom: 2.5rem;
     }
 
     .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.72rem 1.6rem;
-      border-radius: 10px;
-      font-size: 0.88rem;
-      font-weight: 600;
-      text-decoration: none;
-      transition: transform 0.18s, box-shadow 0.18s, background 0.18s;
-      cursor: pointer;
-      border: none;
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.72rem 1.55rem; border-radius: 10px;
+      font-size: 0.875rem; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer;
+      transition: transform .18s, box-shadow .18s, background .18s;
       white-space: nowrap;
     }
-
     .btn-primary {
-      background: linear-gradient(135deg, #6d5bff 0%, #a855f7 100%);
+      background: linear-gradient(135deg,#6d5bff 0%,#a855f7 100%);
       color: #fff;
-      box-shadow: 0 0 28px rgba(109,91,255,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+      box-shadow: 0 0 28px rgba(109,91,255,.32), inset 0 1px 0 rgba(255,255,255,.15);
     }
-
     .btn-primary:hover {
       transform: translateY(-2px);
-      box-shadow: 0 0 40px rgba(109,91,255,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+      box-shadow: 0 0 42px rgba(109,91,255,.5), inset 0 1px 0 rgba(255,255,255,.2);
     }
-
     .btn-outline {
-      background: transparent;
-      color: var(--text);
+      background: transparent; color: var(--text);
       border: 1px solid var(--border2);
     }
+    .btn-outline:hover { background: var(--surface2); border-color:rgba(255,255,255,.2); }
 
-    .btn-outline:hover {
-      background: var(--surface2);
-      border-color: rgba(255,255,255,0.18);
-    }
-
-    /* ── PROVIDER CHIPS ── */
     .providers-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.6rem;
-      flex-wrap: wrap;
-      margin-top: 4rem;
+      display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
     }
-
-    .providers-label {
-      font-size: 0.74rem;
-      color: var(--muted);
-      margin-right: 0.25rem;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-    }
-
+    .providers-label { font-size:.73rem; color:var(--muted); letter-spacing:.05em; text-transform:uppercase; }
     .pchip {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      padding: 0.38rem 0.9rem;
-      border-radius: 8px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      font-size: 0.8rem;
-      font-weight: 500;
-      color: var(--text2);
-      transition: border-color 0.2s, color 0.2s;
+      display:inline-flex; align-items:center; gap:0.4rem;
+      padding: .35rem .85rem; border-radius:8px;
+      background:var(--surface); border:1px solid var(--border);
+      font-size:.79rem; font-weight:500; color:var(--text2);
+      transition: border-color .2s, color .2s;
     }
+    .pchip:hover { border-color:var(--border2); color:var(--text); }
+    .pdot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
 
-    .pchip:hover { border-color: var(--border2); color: var(--text); }
-
-    .pdot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-
-    /* ── STATS ── */
-    .stats-row {
+    /* ── BROWSER MOCKUP ── */
+    .mockup-wrap {
       position: relative;
-      z-index: 1;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      max-width: 680px;
-      margin: 5rem auto 0;
       border-radius: 16px;
       overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow:
+        0 0 0 1px rgba(124,106,255,0.15),
+        0 32px 80px rgba(0,0,0,0.6),
+        0 0 60px rgba(124,106,255,0.08);
+      background: #111;
+    }
+
+    .mockup-bar {
+      background: #1a1f2e;
+      padding: 0.7rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .mockup-dots { display:flex; gap:5px; }
+    .mockup-dots span { width:9px; height:9px; border-radius:50%; }
+    .md-r{background:#ff5f57;} .md-y{background:#febc2e;} .md-g{background:#28c840;}
+
+    .mockup-url {
+      flex: 1; background: #0d1222; border-radius: 6px;
+      padding: 0.28rem 0.85rem; font-size: 0.72rem;
+      color: var(--muted); font-family: 'JetBrains Mono', monospace;
+      text-align: center; border: 1px solid rgba(255,255,255,0.06);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .mockup-img {
+      display: block; width: 100%; height: auto;
+      /* slight zoom-in so the image fills the frame nicely */
+      transform-origin: top left;
+    }
+
+    /* ── STATS ── */
+    .stats-strip {
+      position: relative; z-index: 1;
+      max-width: 700px; margin: 4rem auto 0;
+      display: grid; grid-template-columns: repeat(3,1fr);
+      border-radius: 16px; overflow: hidden;
       border: 1px solid var(--border);
       background: var(--surface);
     }
 
     .stat {
-      padding: 1.5rem 1rem;
-      text-align: center;
+      padding: 1.5rem 1rem; text-align: center;
       border-right: 1px solid var(--border);
     }
-
     .stat:last-child { border-right: none; }
 
-    .stat-val {
-      font-size: 2rem;
-      font-weight: 800;
-      letter-spacing: -0.04em;
-      line-height: 1;
-      margin-bottom: 0.3rem;
+    .stat-n {
+      font-size: 2rem; font-weight: 800; letter-spacing: -0.04em;
+      line-height: 1; margin-bottom: 0.3rem;
+    }
+    .sv { color: var(--violet2); }
+    .sc { color: var(--cyan); }
+    .sg { color: var(--green); }
+
+    .stat-l { font-size: .73rem; color: var(--text2); font-weight: 500; }
+
+    /* ── SECTION ── */
+    .wrap { position:relative; z-index:1; max-width:1080px; margin:0 auto; padding:5rem clamp(1.25rem,4vw,2rem); }
+    .sh { margin-bottom: 2.8rem; }
+    .eyebrow { display:inline-block; font-size:.71rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--violet2); margin-bottom:.65rem; }
+    .stitle { font-size:clamp(1.65rem,3.2vw,2.4rem); font-weight:700; letter-spacing:-.035em; line-height:1.12; margin-bottom:.8rem; color:var(--text); }
+    .sdesc  { font-size:.96rem; color:var(--text2); max-width:480px; line-height:1.72; }
+
+    .hr { height:1px; background:var(--border); position:relative; z-index:1; }
+
+    /* ── FEATURE GRID ── */
+    .fgrid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(288px,1fr));
+      gap: 1px; background: var(--border);
+      border-radius: 18px; overflow: hidden; border: 1px solid var(--border);
     }
 
-    .stat-val.v { color: var(--violet); }
-    .stat-val.c { color: var(--cyan); }
-    .stat-val.g { color: var(--green); }
-
-    .stat-label {
-      font-size: 0.74rem;
-      color: var(--text2);
-      font-weight: 500;
+    .fc {
+      background: var(--surface); padding: 1.75rem 1.75rem 2rem;
+      position: relative; overflow: hidden; transition: background .2s;
     }
-
-    /* ── SECTION WRAPPER ── */
-    .section-wrap {
-      position: relative;
-      z-index: 1;
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 5rem clamp(1.25rem, 4vw, 2rem);
+    .fc::after {
+      content:''; position:absolute; inset:0;
+      background: linear-gradient(135deg, rgba(124,106,255,0.04), transparent 60%);
+      opacity:0; transition: opacity .3s;
     }
-
-    .section-head { margin-bottom: 2.8rem; }
-
-    .section-eyebrow {
-      display: inline-block;
-      font-size: 0.72rem;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--violet);
-      margin-bottom: 0.7rem;
-    }
-
-    .section-title {
-      font-size: clamp(1.7rem, 3.5vw, 2.5rem);
-      font-weight: 700;
-      letter-spacing: -0.035em;
-      line-height: 1.12;
-      margin-bottom: 0.85rem;
-    }
-
-    .section-sub {
-      font-size: 0.98rem;
-      color: var(--text2);
-      max-width: 480px;
-      line-height: 1.7;
-    }
-
-    /* ── HR ── */
-    .hr {
-      height: 1px;
-      background: var(--border);
-      position: relative;
-      z-index: 1;
-    }
-
-    /* ── FEATURE CARDS ── */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      border-radius: 18px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-    }
-
-    .fcard {
-      background: var(--surface);
-      padding: 1.75rem 1.75rem 2rem;
-      position: relative;
-      overflow: hidden;
-      transition: background 0.2s;
-    }
-
-    .fcard::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
-      opacity: 0;
-      transition: opacity 0.3s;
-    }
-
-    .fcard:hover { background: var(--surface2); }
-    .fcard:hover::before { opacity: 1; }
+    .fc:hover { background: var(--surface2); }
+    .fc:hover::after { opacity:1; }
 
     .ficon {
-      width: 42px; height: 42px;
-      border-radius: 11px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.15rem;
-      margin-bottom: 1.1rem;
+      width:42px; height:42px; border-radius:11px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:1.1rem; margin-bottom:1.1rem; flex-shrink:0;
     }
 
-    .fcard h3 {
-      font-size: 0.93rem;
-      font-weight: 600;
-      margin-bottom: 0.45rem;
-      letter-spacing: -0.015em;
-      color: var(--text);
-    }
+    .fc h3 { font-size:.93rem; font-weight:600; margin-bottom:.45rem; letter-spacing:-.015em; color:var(--text); }
 
-    .fcard p {
-      font-size: 0.82rem;
-      color: var(--text2);
-      line-height: 1.65;
-    }
+    .fc p { font-size:.82rem; color:var(--text2); line-height:1.68; }
 
-    .fcard p code {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.75rem;
-      color: var(--violet);
-      background: rgba(124,106,255,0.1);
-      padding: 0.1em 0.35em;
-      border-radius: 4px;
+    .fc p code {
+      font-family:'JetBrains Mono',monospace; font-size:.74rem;
+      color:var(--violet2); background:rgba(124,106,255,0.12);
+      padding:.08em .35em; border-radius:4px;
     }
 
     /* ── QUICK START ── */
-    .qs-layout {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-      align-items: start;
+    .qs-grid { display:grid; grid-template-columns:1fr 1fr; gap:1.2rem; }
+    @media(max-width:680px){ .qs-grid{grid-template-columns:1fr;} }
+
+    .cc {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:13px; overflow:hidden;
     }
 
-    @media (max-width: 700px) {
-      .qs-layout { grid-template-columns: 1fr; }
+    .ctop {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:.6rem 1rem; background:rgba(255,255,255,.025);
+      border-bottom:1px solid var(--border);
     }
 
-    .code-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      overflow: hidden;
-    }
+    .tls{display:flex;gap:5px;}
+    .tls span{width:9px;height:9px;border-radius:50%;}
+    .tlr{background:#ff5f57;} .tly{background:#febc2e;} .tlg{background:#28c840;}
 
-    .code-topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0.65rem 1rem;
-      background: rgba(255,255,255,0.025);
-      border-bottom: 1px solid var(--border);
-    }
+    .clang { font-size:.68rem; color:var(--muted); font-family:'JetBrains Mono',monospace; letter-spacing:.04em; }
 
-    .traffic-lights { display: flex; gap: 5px; }
-    .traffic-lights span {
-      width: 9px; height: 9px;
-      border-radius: 50%;
+    .cbtn {
+      background:none; border:1px solid var(--border); color:var(--text2);
+      padding:.17rem .55rem; border-radius:5px; font-size:.67rem;
+      cursor:pointer; font-family:inherit; transition:color .15s, border-color .15s;
     }
-    .tl-r { background: #ff5f57; }
-    .tl-y { background: #febc2e; }
-    .tl-g { background: #28c840; }
-
-    .code-lang {
-      font-size: 0.7rem;
-      color: var(--muted);
-      font-family: 'JetBrains Mono', monospace;
-      letter-spacing: 0.05em;
-    }
-
-    .code-copy {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--text2);
-      padding: 0.18rem 0.55rem;
-      border-radius: 5px;
-      font-size: 0.68rem;
-      cursor: pointer;
-      font-family: inherit;
-      transition: color 0.15s, border-color 0.15s;
-    }
-
-    .code-copy:hover { color: var(--text); border-color: var(--border2); }
+    .cbtn:hover { color:var(--text); border-color:var(--border2); }
 
     pre {
-      padding: 1.15rem 1.2rem;
-      overflow-x: auto;
-      font-size: 0.8rem;
-      line-height: 1.8;
-      font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+      padding:1.1rem 1.15rem; overflow-x:auto;
+      font-size:.79rem; line-height:1.82;
+      font-family:'JetBrains Mono','SF Mono',Consolas,monospace;
     }
 
-    .t-comment { color: var(--muted); }
-    .t-cmd     { color: var(--cyan); }
-    .t-flag    { color: #b8b0ff; }
-    .t-str     { color: var(--green); }
-    .t-sym     { color: var(--text2); }
+    .tk  { color:var(--cyan); }        /* keyword / command */
+    .ts  { color:var(--green); }       /* string */
+    .tf  { color:#c4bcff; }            /* flag */
+    .tc  { color:var(--muted); }       /* comment — now uses --muted which is lighter */
+    .tsym{ color:var(--text2); }       /* symbol / path */
 
     /* ── STACK ── */
-    .stack-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.65rem;
-    }
-
+    .slist { display:flex; flex-wrap:wrap; gap:.6rem; }
     .schip {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.55rem;
-      padding: 0.52rem 1.1rem;
-      border-radius: 10px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      font-size: 0.82rem;
-      font-weight: 500;
-      color: var(--text2);
-      transition: border-color 0.2s, color 0.2s, background 0.2s;
+      display:inline-flex; align-items:center; gap:.55rem;
+      padding:.5rem 1.05rem; border-radius:10px;
+      background:var(--surface); border:1px solid var(--border);
+      font-size:.81rem; font-weight:500; color:var(--text2);
+      transition:border-color .2s, color .2s, background .2s;
     }
-
-    .schip:hover {
-      border-color: rgba(124,106,255,0.4);
-      color: var(--text);
-      background: var(--surface2);
-    }
-
-    .sdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .schip:hover { border-color:rgba(124,106,255,.4); color:var(--text); background:var(--surface2); }
+    .sdot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 
     /* ── FOOTER ── */
     footer {
-      position: relative;
-      z-index: 1;
-      border-top: 1px solid var(--border);
-      padding: 2.5rem clamp(1.25rem, 4vw, 2rem);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 1rem;
+      position:relative; z-index:1;
+      border-top:1px solid var(--border);
+      padding: 2.25rem clamp(1.25rem,4vw,2rem);
+      display:flex; align-items:center; justify-content:space-between;
+      flex-wrap:wrap; gap:1rem;
     }
 
-    .footer-brand {
-      display: flex;
-      align-items: center;
-      gap: 0.55rem;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text2);
-      text-decoration: none;
-    }
+    .flogo { display:flex; align-items:center; gap:.55rem; text-decoration:none; color:var(--text2); font-size:.85rem; font-weight:600; }
 
-    .footer-links {
-      display: flex;
-      gap: 0.2rem;
-      list-style: none;
+    .flinks { display:flex; gap:.2rem; list-style:none; }
+    .flinks a {
+      color:var(--text2); text-decoration:none; font-size:.81rem;
+      padding:.3rem .7rem; border-radius:6px;
+      transition:color .15s,background .15s;
     }
-
-    .footer-links a {
-      color: var(--text2);
-      text-decoration: none;
-      font-size: 0.82rem;
-      padding: 0.3rem 0.7rem;
-      border-radius: 6px;
-      transition: color 0.15s, background 0.15s;
-    }
-
-    .footer-links a:hover {
-      color: var(--text);
-      background: rgba(255,255,255,0.05);
-    }
-
-    .footer-copy {
-      font-size: 0.75rem;
-      color: var(--muted);
-    }
+    .flinks a:hover { color:var(--text); background:rgba(255,255,255,.05); }
+    .fcopy { font-size:.73rem; color:var(--muted); }
 
     /* ── FADE IN ── */
-    .fi {
-      opacity: 0;
-      transform: translateY(20px);
-      transition: opacity 0.55s ease, transform 0.55s ease;
-    }
-    .fi.on { opacity: 1; transform: translateY(0); }
-    .fi-d1 { transition-delay: 0.05s; }
-    .fi-d2 { transition-delay: 0.12s; }
+    .fi { opacity:0; transform:translateY(18px); transition:opacity .55s ease, transform .55s ease; }
+    .fi.on { opacity:1; transform:translateY(0); }
+    .fd1{transition-delay:.06s;} .fd2{transition-delay:.14s;} .fd3{transition-delay:.22s;}
 
-    /* ── RESPONSIVE ── */
-    @media (max-width: 640px) {
-      .nav-links { display: none; }
-      footer { flex-direction: column; align-items: flex-start; }
-      .stats-row { grid-template-columns: repeat(3,1fr); }
-    }
-
-    @media (max-width: 420px) {
-      .stats-row { grid-template-columns: 1fr; border-radius: 14px; }
-      .stat { border-right: none; border-bottom: 1px solid var(--border); }
-      .stat:last-child { border-bottom: none; }
+    @media(max-width:640px){
+      .nav-links{display:none;}
+      .stats-strip{grid-template-columns:1fr 1fr;}
+      .stats-strip .stat:nth-child(2){border-right:none;}
+      .stats-strip .stat:nth-child(3){border-top:1px solid var(--border); grid-column:span 2;}
+      footer{flex-direction:column;align-items:flex-start;}
     }
   </style>
 </head>
 <body>
 
-<div class="grid-bg"></div>
-<div class="aurora">
-  <div class="aurora-blob"></div>
-  <div class="aurora-blob"></div>
-  <div class="aurora-blob"></div>
-</div>
+<div class="aurora"><div class="ab ab1"></div><div class="ab ab2"></div><div class="ab ab3"></div></div>
 
-<!-- ── NAV ── -->
+<!-- NAV -->
 <nav>
   <a href="#" class="nav-logo">
-    <div class="logo-icon">✦</div>
+    <div class="logo-mark">✦</div>
     AI Usage
   </a>
   <ul class="nav-links">
     <li><a href="#features">Features</a></li>
+    <li><a href="#preview">Preview</a></li>
     <li><a href="#quickstart">Quick Start</a></li>
     <li><a href="#stack">Stack</a></li>
-    <li><a href="https://github.com/savvy773/ai_usage" target="_blank" rel="noopener" class="nav-gh">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"/></svg>
-      GitHub
-    </a></li>
+    <li>
+      <a href="https://github.com/savvy773/ai_usage" target="_blank" rel="noopener" class="nav-gh">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"/></svg>
+        GitHub
+      </a>
+    </li>
   </ul>
 </nav>
 
-<!-- ── HERO ── -->
-<section class="hero">
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-inner">
 
-  <div class="hero-badge fi">
-    <span class="badge-pulse"></span>
-    Local — No cloud. No telemetry.
+    <!-- LEFT: copy -->
+    <div>
+      <div class="hero-badge fi">
+        <span class="badge-dot"></span>
+        Local — No cloud. No telemetry.
+      </div>
+
+      <h1 class="fi fd1">
+        <span class="gt">Your AI CLI</span><br>
+        <span class="gt">Usage, Unified</span>
+      </h1>
+
+      <p class="hero-sub fi fd2">
+        Monitor Claude, Codex, and Gemini CLI usage in a single local dashboard.
+        Real-time collection, smart retry, and live server logs — running entirely on your machine.
+      </p>
+
+      <div class="hero-cta fi fd2">
+        <a href="https://github.com/savvy773/ai_usage" target="_blank" rel="noopener" class="btn btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"/></svg>
+          View on GitHub
+        </a>
+        <a href="#quickstart" class="btn btn-outline">
+          Quick Start
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+
+      <div class="providers-row fi fd3">
+        <span class="providers-label">Works with</span>
+        <span class="pchip"><span class="pdot" style="background:#fb923c"></span>Claude</span>
+        <span class="pchip"><span class="pdot" style="background:#22d3ee"></span>Codex</span>
+        <span class="pchip"><span class="pdot" style="background:#34d399"></span>Gemini CLI</span>
+      </div>
+    </div>
+
+    <!-- RIGHT: dashboard screenshot -->
+    <div class="mockup-wrap fi fd2" id="preview">
+      <div class="mockup-bar">
+        <div class="mockup-dots">
+          <span class="md-r"></span><span class="md-y"></span><span class="md-g"></span>
+        </div>
+        <div class="mockup-url">127.0.0.1:5173</div>
+      </div>
+      <img class="mockup-img" src="ai_dash.png" alt="AI Usage Dashboard screenshot" loading="lazy" />
+    </div>
+
   </div>
 
-  <h1 class="fi fi-d1">
-    <span class="grad-text">Your AI CLI</span><br>
-    <span class="grad-text">Usage, Unified</span>
-  </h1>
-
-  <p class="hero-sub fi fi-d2">
-    Monitor Claude, Codex, and Gemini CLI usage in a single local dashboard.
-    Real-time collection, smart retry logic, and a live server log —
-    all running on your machine.
-  </p>
-
-  <div class="hero-cta fi">
-    <a href="https://github.com/savvy773/ai_usage" target="_blank" rel="noopener" class="btn btn-primary">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"/></svg>
-      View on GitHub
-    </a>
-    <a href="#quickstart" class="btn btn-outline">
-      Quick Start
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-    </a>
-  </div>
-
-  <div class="providers-row fi">
-    <span class="providers-label">Works with</span>
-    <span class="pchip"><span class="pdot" style="background:#f97316"></span>Claude</span>
-    <span class="pchip"><span class="pdot" style="background:#22d3ee"></span>Codex</span>
-    <span class="pchip"><span class="pdot" style="background:#34d399"></span>Gemini CLI</span>
-  </div>
-
-  <div class="stats-row fi">
+  <!-- stats strip below hero columns -->
+  <div class="stats-strip fi" style="max-width:1100px;margin:3.5rem auto 0">
     <div class="stat">
-      <div class="stat-val v">3</div>
-      <div class="stat-label">Providers</div>
+      <div class="stat-n sv">3</div>
+      <div class="stat-l">Providers</div>
     </div>
     <div class="stat">
-      <div class="stat-val c">5×</div>
-      <div class="stat-label">Retry Attempts</div>
+      <div class="stat-n sc">5×</div>
+      <div class="stat-l">Retry Attempts</div>
     </div>
     <div class="stat">
-      <div class="stat-val g">10m</div>
-      <div class="stat-label">History Buckets</div>
+      <div class="stat-n sg">10m</div>
+      <div class="stat-l">History Buckets</div>
     </div>
   </div>
-
-</section>
+</div>
 
 <div class="hr"></div>
 
-<!-- ── FEATURES ── -->
-<div class="section-wrap" id="features">
-  <div class="section-head fi">
-    <span class="section-eyebrow">Features</span>
-    <h2 class="section-title">Everything you need<br>to track AI usage</h2>
-    <p class="section-sub">For developers running multiple AI CLIs locally. No accounts, no API keys, no data leaving your machine.</p>
+<!-- FEATURES -->
+<div class="wrap" id="features">
+  <div class="sh fi">
+    <span class="eyebrow">Features</span>
+    <h2 class="stitle">Everything you need<br>to track AI usage</h2>
+    <p class="sdesc">For developers running multiple AI CLIs locally. No accounts, no API keys, no data leaving your machine.</p>
   </div>
 
-  <div class="features-grid fi">
-    <div class="fcard">
-      <div class="ficon" style="background:rgba(249,115,22,0.1);color:#f97316">⚡</div>
+  <div class="fgrid fi">
+    <div class="fc">
+      <div class="ficon" style="background:rgba(251,146,60,0.1);color:#fb923c">⚡</div>
       <h3>Multi-Provider Collection</h3>
-      <p>Collects Claude <code>/usage</code>, Codex <code>/status</code>, and Gemini <code>/model</code> via virtual terminals — no API keys needed.</p>
+      <p>Runs Claude <code>/usage</code>, Codex <code>/status</code>, and Gemini <code>/model</code> in virtual terminals — no API keys needed.</p>
     </div>
-    <div class="fcard">
+    <div class="fc">
       <div class="ficon" style="background:rgba(34,211,238,0.1);color:#22d3ee">↻</div>
       <h3>Smart Retry Logic</h3>
-      <p>Up to 5 attempts per provider with phase diagnostics. Automatically re-enters slash commands if they disappear mid-session.</p>
+      <p>Up to 5 attempts per provider with phase diagnostics. Re-enters slash commands automatically if they disappear mid-session.</p>
     </div>
-    <div class="fcard">
-      <div class="ficon" style="background:rgba(124,106,255,0.1);color:#a5a0ff">▦</div>
+    <div class="fc">
+      <div class="ficon" style="background:rgba(157,143,255,0.12);color:var(--violet2)">▦</div>
       <h3>Weekly Pace Card</h3>
-      <p>Compare your actual usage bar against a minimum 20% threshold marker to stay on track through the week.</p>
+      <p>Compare your actual usage bar against a 20% minimum threshold marker to stay on track throughout the week.</p>
     </div>
-    <div class="fcard">
+    <div class="fc">
       <div class="ficon" style="background:rgba(52,211,153,0.1);color:#34d399">⏱</div>
       <h3>Reset Countdown</h3>
-      <p>Live countdown to your next usage reset for each provider, so you always know how much runway is left.</p>
+      <p>Live per-provider countdown to the next usage reset — always know how much runway you have left.</p>
     </div>
-    <div class="fcard">
+    <div class="fc">
       <div class="ficon" style="background:rgba(168,85,247,0.1);color:#c084fc">📡</div>
       <h3>Live Server Logs</h3>
-      <p>SSE-based real-time log panel via <code>/api/server/logs</code> — streams directly to the browser, no polling.</p>
+      <p>SSE-based real-time log panel via <code>/api/server/logs</code>. Streams directly to the browser — no polling required.</p>
     </div>
-    <div class="fcard">
+    <div class="fc">
       <div class="ficon" style="background:rgba(251,191,36,0.1);color:#fbbf24">⬡</div>
       <h3>Dual Cache</h3>
-      <p>Server-side JSON history in 10-minute buckets, plus browser <code>localStorage</code> fallback for instant first render.</p>
+      <p>Server-side JSON history in 10-minute buckets plus browser <code>localStorage</code> fallback for instant first paint.</p>
     </div>
   </div>
 </div>
 
 <div class="hr"></div>
 
-<!-- ── QUICK START ── -->
-<div class="section-wrap" id="quickstart">
-  <div class="section-head fi">
-    <span class="section-eyebrow">Quick Start</span>
-    <h2 class="section-title">Up in one command</h2>
-    <p class="section-sub">Clone, install, and run. The dashboard opens at <code style="font-family:'JetBrains Mono',monospace;font-size:0.85em;color:var(--cyan)">127.0.0.1:5173</code>.</p>
+<!-- QUICK START -->
+<div class="wrap" id="quickstart">
+  <div class="sh fi">
+    <span class="eyebrow">Quick Start</span>
+    <h2 class="stitle">Up in one command</h2>
+    <p class="sdesc">One-liner installs, clones, and launches the dashboard. Or clone manually and run the start script.</p>
   </div>
 
-  <div style="margin-bottom:1rem" class="fi">
-    <div class="code-card">
-      <div class="code-topbar">
-        <div class="traffic-lights"><span class="tl-r"></span><span class="tl-y"></span><span class="tl-g"></span></div>
-        <span class="code-lang">one-liner install · powershell</span>
-        <button class="code-copy" onclick="copyCode(this,'c0')">Copy</button>
-      </div>
-      <pre><code id="c0"><span class="t-cmd">irm</span> https://raw.githubusercontent.com/savvy773/ai_usage/main/scripts/install.ps1 <span class="t-sym">|</span> <span class="t-cmd">iex</span></code></pre>
+  <!-- one-liner -->
+  <div class="cc fi" style="margin-bottom:1.2rem">
+    <div class="ctop">
+      <div class="tls"><span class="tlr"></span><span class="tly"></span><span class="tlg"></span></div>
+      <span class="clang">one-liner · powershell</span>
+      <button class="cbtn" onclick="cp(this,'c0')">Copy</button>
     </div>
+    <pre><code id="c0"><span class="tk">irm</span> https://raw.githubusercontent.com/savvy773/ai_usage/main/scripts/install.ps1 <span class="tsym">|</span> <span class="tk">iex</span></code></pre>
   </div>
 
-  <div class="qs-layout fi">
-    <div class="code-card">
-      <div class="code-topbar">
-        <div class="traffic-lights"><span class="tl-r"></span><span class="tl-y"></span><span class="tl-g"></span></div>
-        <span class="code-lang">manual install</span>
-        <button class="code-copy" onclick="copyCode(this,'c1')">Copy</button>
+  <div class="qs-grid fi">
+    <div class="cc">
+      <div class="ctop">
+        <div class="tls"><span class="tlr"></span><span class="tly"></span><span class="tlg"></span></div>
+        <span class="clang">manual install</span>
+        <button class="cbtn" onclick="cp(this,'c1')">Copy</button>
       </div>
-      <pre><code id="c1"><span class="t-comment"># clone &amp; install</span>
-<span class="t-cmd">git clone</span> https://github.com/savvy773/ai_usage.git
-<span class="t-cmd">cd</span> ai_usage
-<span class="t-cmd">pnpm</span> install
+      <pre><code id="c1"><span class="tc"># clone &amp; install</span>
+<span class="tk">git clone</span> https://github.com/savvy773/ai_usage.git
+<span class="tk">cd</span> ai_usage
+<span class="tk">pnpm</span> install
 
-<span class="t-comment"># start the dashboard</span>
-<span class="t-sym">.\scripts\</span><span class="t-cmd">start-server.ps1</span> <span class="t-flag">-Open</span></code></pre>
+<span class="tc"># start dashboard</span>
+<span class="tsym">.\scripts\</span><span class="tk">start-server.ps1</span> <span class="tf">-Open</span></code></pre>
     </div>
 
-    <div class="code-card">
-      <div class="code-topbar">
-        <div class="traffic-lights"><span class="tl-r"></span><span class="tl-y"></span><span class="tl-g"></span></div>
-        <span class="code-lang">options</span>
-        <button class="code-copy" onclick="copyCode(this,'c2')">Copy</button>
+    <div class="cc">
+      <div class="ctop">
+        <div class="tls"><span class="tlr"></span><span class="tly"></span><span class="tlg"></span></div>
+        <span class="clang">options</span>
+        <button class="cbtn" onclick="cp(this,'c2')">Copy</button>
       </div>
-      <pre><code id="c2"><span class="t-sym">.\scripts\start-server.ps1</span> <span class="t-flag">-Open</span>
-  <span class="t-comment"># open browser automatically</span>
+      <pre><code id="c2"><span class="tsym">start-server.ps1</span> <span class="tf">-Open</span>
+  <span class="tc"># open browser automatically</span>
 
-<span class="t-sym">.\scripts\start-server.ps1</span> <span class="t-flag">-Port</span> <span class="t-str">5173</span>
-  <span class="t-comment"># use custom port</span>
+<span class="tsym">start-server.ps1</span> <span class="tf">-Port</span> <span class="ts">5173</span>
+  <span class="tc"># use a custom port</span>
 
-<span class="t-sym">.\scripts\start-server.ps1</span> <span class="t-flag">-Mode</span> preview
-  <span class="t-comment"># production preview build</span>
+<span class="tsym">start-server.ps1</span> <span class="tf">-Mode</span> preview
+  <span class="tc"># production preview build</span>
 
-<span class="t-sym">.\scripts\start-server.ps1</span> <span class="t-flag">-Status</span>
-  <span class="t-comment"># show server status</span></code></pre>
+<span class="tsym">start-server.ps1</span> <span class="tf">-Status</span>
+  <span class="tc"># show server status</span></code></pre>
     </div>
   </div>
 </div>
 
 <div class="hr"></div>
 
-<!-- ── STACK ── -->
-<div class="section-wrap" id="stack">
-  <div class="section-head fi">
-    <span class="section-eyebrow">Tech Stack</span>
-    <h2 class="section-title">Built with modern tools</h2>
-    <p class="section-sub">Minimal runtime dependencies. SvelteKit handles the heavy lifting — the browser just renders.</p>
+<!-- STACK -->
+<div class="wrap" id="stack">
+  <div class="sh fi">
+    <span class="eyebrow">Tech Stack</span>
+    <h2 class="stitle">Built with modern tools</h2>
+    <p class="sdesc">Minimal runtime deps. SvelteKit handles the heavy lifting — the browser just renders.</p>
   </div>
 
-  <div class="stack-list fi">
+  <div class="slist fi">
     <div class="schip"><span class="sdot" style="background:#ff3e00"></span>SvelteKit 2</div>
     <div class="schip"><span class="sdot" style="background:#38bdf8"></span>Tailwind CSS v4</div>
     <div class="schip"><span class="sdot" style="background:#3178c6"></span>TypeScript</div>
     <div class="schip"><span class="sdot" style="background:#a5a0ff"></span>shadcn-svelte</div>
     <div class="schip"><span class="sdot" style="background:#22d3ee"></span>node-pty</div>
     <div class="schip"><span class="sdot" style="background:#fbbf24"></span>Vite 8</div>
-    <div class="schip"><span class="sdot" style="background:#e2e8f0"></span>Geist Font</div>
+    <div class="schip"><span class="sdot" style="background:#e8e8e8"></span>Geist Font</div>
   </div>
 </div>
 
-<!-- ── FOOTER ── -->
+<!-- FOOTER -->
 <footer>
-  <a href="https://github.com/savvy773/ai_usage" class="footer-brand" target="_blank" rel="noopener">
-    <div class="logo-icon" style="width:20px;height:20px;font-size:0.6rem">✦</div>
+  <a href="https://github.com/savvy773/ai_usage" class="flogo" target="_blank" rel="noopener">
+    <div class="logo-mark" style="width:22px;height:22px;font-size:.65rem;border-radius:6px">✦</div>
     AI Usage Dashboard
   </a>
 
-  <ul class="footer-links">
+  <ul class="flinks">
     <li><a href="https://github.com/savvy773/ai_usage" target="_blank" rel="noopener">GitHub</a></li>
     <li><a href="https://github.com/savvy773/ai_usage/blob/main/docs/architecture.md" target="_blank" rel="noopener">Architecture</a></li>
     <li><a href="https://github.com/savvy773/ai_usage/blob/main/docs/fix_check.md" target="_blank" rel="noopener">Fix Checklist</a></li>
   </ul>
 
-  <span class="footer-copy">MIT License · Local. Private. Yours.</span>
+  <span class="fcopy">MIT License · Local. Private. Yours.</span>
 </footer>
 
 <script>
-  /* scroll fade-in */
   const io = new IntersectionObserver(
     es => es.forEach(e => { if (e.isIntersecting) e.target.classList.add('on'); }),
-    { threshold: 0.08 }
+    { threshold: 0.07 }
   );
   document.querySelectorAll('.fi').forEach(el => io.observe(el));
 
-  /* copy button */
-  function copyCode(btn, id) {
-    const raw = document.getElementById(id).innerText;
-    navigator.clipboard.writeText(raw).then(() => {
+  function cp(btn, id) {
+    navigator.clipboard.writeText(document.getElementById(id).innerText).then(() => {
       btn.textContent = 'Copied!';
       setTimeout(() => btn.textContent = 'Copy', 1800);
     });
