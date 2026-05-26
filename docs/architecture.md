@@ -99,7 +99,7 @@ Weekly limit: [████████████████░░░░] 82%
 
 중요: Codex의 `left`는 남은 양입니다. Dashboard는 모든 provider를 used percent로 표시하므로 `92% left`는 `8% used`로 변환합니다.
 Codex는 `5h limit`와 `Weekly limit` row가 모두 있어야 성공으로 봅니다. `100% context left` 같은 일반 상태줄은 usage row가 아니므로 current/week 값으로 쓰지 않습니다.
-첫 pty attempt가 Codex MCP boot redraw만 캡처하고 usage row 없이 끝나는 경우가 있습니다. 이때는 `markers=none`, raw output은 크지만 정규화 후 line 수가 거의 없는 형태입니다. Collector는 이 케이스를 startup transient로 보고 일반 retry 로그와 `last-failure` 덮어쓰기를 생략한 뒤 다음 attempt를 진행합니다.
+첫 pty attempt가 Codex MCP boot redraw만 캡처하고 usage row 없이 끝나는 경우가 있습니다. 이때는 `markers=none`, raw output은 크지만 정규화 후 line 수가 거의 없는 형태입니다. Collector는 이 케이스를 startup transient로 보고 일반 retry 로그와 `last-failure` 덮어쓰기를 생략한 뒤 다음 attempt를 진행합니다. 이런 숨김 startup retry 뒤 성공한 경우도 일반 `recovered on attempt ...` 로그를 남기지 않습니다. 해당 로그는 reportable failure가 한 번 이상 기록된 뒤 성공했을 때만 남깁니다.
 Codex가 `/status`에 `Limits: refresh requested; run /status again shortly.`로 응답하면 사용량 row가 아직 준비되지 않은 상태입니다. Collector는 같은 pty 세션에서 3초 간격으로 `/status`를 최대 4번 다시 요청해 90초 timeout을 새 attempt로 낭비하지 않습니다.
 
 ### Claude `/usage`
@@ -143,6 +143,7 @@ provider별 CLI 수집은 순차로 실행됩니다. 각 provider는 실패 시 
 | capture timeout           | 1-2회차: 45초, Codex 90초, Gemini 105초     |
 | patient capture timeout   | 3-5회차: 60초, Codex 120초, Gemini 135초    |
 | collector retry delay     | 1.5초, 5초, 5초, 10초                       |
+| retry recovery log        | reportable failure 뒤 성공한 경우만 기록    |
 | Codex same-session retry  | refresh requested 응답 후 3초 간격 최대 4회 |
 | slash reissue guard       | ready prompt 복귀 후 5초 간격 최대 3회      |
 | history bucket interval   | 10분                                        |

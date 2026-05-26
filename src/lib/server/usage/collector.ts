@@ -43,6 +43,8 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 
 	const startedAt = performance.now();
 	let latestResult: ProviderUsage | null = null;
+	let hadReportableFailure = false;
+	let transientStartupMisses = 0;
 
 	for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
 		let output = '';
@@ -66,9 +68,13 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		}).catch(() => undefined);
 
 		if (latestResult.status === 'ok') {
-			if (attempt > 1) {
+			if (attempt > 1 && hadReportableFailure) {
 				console.info(
 					`[collector] ${provider.name} recovered on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS} in ${formatDuration(performance.now() - startedAt)}.`
+				);
+			} else if (attempt > 1 && transientStartupMisses > 0 && DEBUG_COLLECTOR_LOGS) {
+				console.info(
+					`[collector] ${provider.name} completed after ${transientStartupMisses} startup redraw retry in ${formatDuration(performance.now() - startedAt)}.`
 				);
 			}
 			return withCollectionDuration(latestResult, startedAt);
@@ -79,12 +85,14 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		if (attempt < MAX_COLLECTION_ATTEMPTS) {
 			const retryDelayMs = collectionRetryDelayMs(attempt);
 			if (transientStartupMiss) {
+				transientStartupMisses += 1;
 				if (DEBUG_COLLECTOR_LOGS) {
 					console.info(
 						`[collector] ${provider.name} startup redraw only on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}; retrying in ${formatDuration(retryDelayMs)}. ${details}`
 					);
 				}
 			} else {
+				hadReportableFailure = true;
 				console.info(
 					`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(retryDelayMs)}. ${details}`
 				);

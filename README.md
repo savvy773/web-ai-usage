@@ -104,4 +104,6 @@ CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architec
 
 파싱 오류 확인은 `data/raw/gemini-last-failure.txt`처럼 provider별 마지막 실패 raw를 먼저 보고, 현재 최종 상태는 `data/raw/gemini-latest.txt` 또는 `data/raw/claude-latest.txt`에서 확인합니다. 화면에 뿌릴 최신 데이터와 최근 6개 bucket은 `data/usage-latest.json`에서 바로 확인할 수 있습니다.
 
+Codex startup redraw만 잡힌 retry는 일반 collector 로그와 `last-failure`를 남기지 않습니다. 따라서 `collector.log`의 `recovered on attempt ...`는 실제 reportable failure 뒤 성공한 경우에만 봅니다. startup redraw 흐름까지 보고 싶으면 `AI_USAGE_DEBUG_LOGS=1`로 서버를 시작합니다.
+
 `data/`와 `.server/`는 Git ignore 대상입니다. `rawPreview` 같은 raw terminal output은 history JSON에 저장하지 않고 `data/raw/`에 최신 tail만 별도 저장합니다.

@@ -138,6 +138,13 @@
 - 조치: collector snapshot/log에 `phase`를 추가해 readiness, slash-buffer, refresh-pending, model-screen-incomplete를 먼저 분리.
 - 조치: Codex/Gemini가 ready prompt로 돌아왔는데 usage 화면과 slash buffer가 없으면 slash command가 소실된 것으로 보고 같은 세션에서 5초 간격으로 최대 3번 재입력.
 
+### 2026-05-26: Codex startup retry log noise
+
+- 증상: `collector.log`에 Codex `recovered on attempt 2/5 in 18.xs`만 반복되고 앞선 실패 라인이 없습니다.
+- 원인: 1회차가 Codex MCP startup redraw만 캡처한 transient attempt라 일반 실패 로그와 `last-failure`를 남기지 않았지만, 2회차 성공은 `recovered`로 기록했습니다.
+- 조치: 숨김 startup retry만 거친 성공은 일반 `recovered` 로그를 남기지 않습니다. 실제 reportable failure 뒤 성공한 경우에만 `recovered on attempt ...`를 기록합니다.
+- 필요 시: 숨김 startup retry까지 확인하려면 `AI_USAGE_DEBUG_LOGS=1`로 서버를 시작하고 `startup redraw only` 로그를 봅니다.
+
 ## 수정 후 검증
 
 - [ ] `pnpm check`
