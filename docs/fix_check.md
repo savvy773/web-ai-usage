@@ -46,6 +46,8 @@ Check in this order:
 Inside parsed snapshots, read:
 
 - `phase`
+- `workingDirectory`
+- `workingDirectoryCandidates`
 - `markers`
 - `parseDiagnostics`
 - `status`
@@ -61,6 +63,7 @@ After a successful live refresh, do not treat older `partial` lines as current f
 - `collector.log` timestamps are UTC.
 - The local dashboard clock is usually KST.
 - A later `usage-output-complete` snapshot supersedes an older `partial` attempt for the same provider.
+- If served JSON says `Previous data kept`, inspect the raw snapshot for the latest failure, but the browser should still show the previous usable values.
 - If the latest `data\usage-latest.json` has all providers `ok`, watch the next scheduled refresh before changing code.
 
 For follow-up monitoring, check only lines after the latest successful `generatedAt` time unless the user is asking about an older incident.
@@ -69,6 +72,7 @@ Escalate to collector/runtime investigation when new lines repeat:
 
 - `node-pty path failed; trying pipe fallback`
 - `markers=none`
+- `claude-trust-prompt` or `codex-update-prompt`
 - startup/redraw phases such as `claude-startup-or-redraw`, `codex-startup-or-redraw`, or `gemini-startup-or-redraw`
 - final-attempt `partial` warnings for all providers in the same refresh bucket
 

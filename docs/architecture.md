@@ -69,6 +69,7 @@ If a refresh takes longer than the short wait window, the API returns the last u
 Default behavior:
 
 - Starts preview mode on `http://127.0.0.1:5173/`.
+- Loads `.env` before build/preview startup.
 - Uses `--strictPort`.
 - Writes process state to `.server\ai-usage-dashboard.json`.
 - Restarts only a tracked dashboard process from this project.
@@ -82,17 +83,17 @@ Provider collection is sequential. Each provider can retry up to 5 times. A fail
 
 Key timings:
 
-| Setting                 | Value                                             |
-| ----------------------- | ------------------------------------------------- |
-| CLI working directory   | `D:\Code\_temp`                                   |
-| shell                   | `pwsh.exe -NoLogo -NoProfile`                     |
-| retry delays            | `1.5s`, `5s`, `5s`, `10s`                         |
-| history bucket          | `10 minutes`                                      |
-| quick refresh wait      | about `2s`                                        |
-| manual refresh cooldown | `10s`                                             |
-| frontend polling        | until refresh finishes or polling attempts expire |
+| Setting                 | Value                                                                    |
+| ----------------------- | ------------------------------------------------------------------------ |
+| CLI working directories | `AI_USAGE_CWD`, `AI_USAGE_CWD_CANDIDATES`, `%USERPROFILE%`, install path |
+| shell                   | `pwsh.exe -NoLogo -NoProfile -NoExit`                                    |
+| retry delays            | `1.5s`, `5s`, `5s`, `10s`                                                |
+| history bucket          | `10 minutes`                                                             |
+| quick refresh wait      | about `2s`                                                               |
+| manual refresh cooldown | `10s`                                                                    |
+| frontend polling        | until refresh finishes or polling attempts expire                        |
 
-Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command.
+Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
 
 ## Provider Parsing
 

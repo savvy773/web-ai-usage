@@ -1,5 +1,45 @@
+function envValue(name: string) {
+	return typeof process === 'undefined' ? undefined : process.env[name];
+}
+
+function runtimeWorkingDirectory() {
+	try {
+		return typeof process !== 'undefined' && typeof process.cwd === 'function'
+			? process.cwd()
+			: '.';
+	} catch {
+		return '.';
+	}
+}
+
+function splitWorkingDirectories(value: string | undefined) {
+	if (!value) return [];
+	return value
+		.split(';')
+		.map((item) => item.trim().replace(/^["']|["']$/g, ''))
+		.filter(Boolean);
+}
+
+function uniqueWorkingDirectories(values: string[]) {
+	const seen = new Set<string>();
+	return values.filter((value) => {
+		const key = value.toLowerCase();
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+}
+
+export const CLI_WORKING_DIRECTORIES = uniqueWorkingDirectories([
+	...splitWorkingDirectories(envValue('AI_USAGE_CWD')),
+	...splitWorkingDirectories(envValue('AI_USAGE_CWD_CANDIDATES')),
+	envValue('USERPROFILE') ?? envValue('HOME') ?? '',
+	runtimeWorkingDirectory()
+]).filter(Boolean);
+
 export const CLI_COLLECTION_CONFIG = {
-	workingDirectory: process.env.AI_USAGE_CWD ?? process.env.USERPROFILE ?? process.env.HOME ?? '.',
+	workingDirectory: CLI_WORKING_DIRECTORIES[0] ?? '.',
+	workingDirectories: CLI_WORKING_DIRECTORIES.length > 0 ? CLI_WORKING_DIRECTORIES : ['.'],
 	shellCommandDelayMs: 500,
 	commandDelayMs: 6000,
 	captureTimeoutMs: 45_000,
@@ -9,7 +49,13 @@ export const CLI_COLLECTION_CONFIG = {
 	},
 	shell: {
 		command: 'pwsh.exe',
-		args: ['-NoLogo', '-NoProfile']
+		args: [
+			'-NoLogo',
+			'-NoProfile',
+			'-NoExit',
+			'-Command',
+			'try { Set-PSReadLineOption -PredictionSource None -ErrorAction SilentlyContinue } catch {}'
+		]
 	},
 	env: {
 		GEMINI_CLI_TRUST_WORKSPACE: 'true'
@@ -100,7 +146,7 @@ export type UsageRefreshState = {
 export function createEmptyWindow(id: UsageWindowId): UsageWindow {
 	return {
 		id,
-		label: id === 'fiveHour' ? 'Current' : 'Week',
+		label: id === 'fiveHour' ? '5h Current' : 'Week',
 		used: null,
 		limit: null,
 		percent: null,

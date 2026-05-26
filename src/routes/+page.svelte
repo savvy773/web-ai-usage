@@ -17,18 +17,45 @@
 		message: string;
 		timestamp: string;
 	}
-	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
+	import type {
+		ProviderId,
+		ProviderUsage,
+		UsagePayload,
+		UsageWindow,
+		UsageWindowId
+	} from '$lib/usage';
 	import type { PageData } from './$types';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
 	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 	const USAGE_CACHE_KEY = 'ai-usage-payload-cache';
+	const CHECKLIST_STORAGE_KEY = 'ai-usage-checklist-state';
 	const USAGE_REQUEST_TIMEOUT_MS = 10_000;
 	const USAGE_REQUEST_RETRIES = 2;
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
+	const PROVIDER_CHECKS: Record<ProviderId, string[]> = {
+		claude: [
+			'Latest parsed JSON is ok or previous values are shown',
+			'Raw output includes Current session and Current week',
+			'Working directory is trusted for Claude',
+			'Last failure is older than the latest success'
+		],
+		codex: [
+			'Latest parsed JSON is ok or previous values are shown',
+			'Raw output includes 5h limit and Weekly limit',
+			'Left percent is converted to used percent',
+			'Update prompt did not intercept /status'
+		],
+		gemini: [
+			'Latest parsed JSON is ok or previous values are shown',
+			'Raw output includes Model usage',
+			'At least three model rows are parsed',
+			'Auth or trust prompt is not blocking /model'
+		]
+	};
 	const DAY_MS = 24 * 60 * 60 * 1000;
 	const MIN_WEEKLY_PACE_TARGET = 20;
 	const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en', {
@@ -67,6 +94,8 @@
 	let logContainer = $state<HTMLElement | null>(null);
 	let autoScrollLogs = $state(true);
 	let logsCopied = $state(false);
+	let activeCheckProvider = $state<ProviderId>('claude');
+	let checklistState = $state<Record<string, boolean>>({});
 
 	$effect(() => {
 		if (logs.length > 0 && logContainer && autoScrollLogs && showLogs) {
@@ -97,6 +126,7 @@
 
 	onMount(() => {
 		restoreRefreshCooldown();
+		restoreChecklistState();
 		const pageWasReloaded = isPageReload();
 		const cachedPayload = readCachedPayload();
 		if (payload) {
@@ -242,6 +272,42 @@
 			localStorage.removeItem(USAGE_CACHE_KEY);
 			return null;
 		}
+	}
+
+	function restoreChecklistState() {
+		try {
+			const stored = localStorage.getItem(CHECKLIST_STORAGE_KEY);
+			checklistState = stored ? (JSON.parse(stored) as Record<string, boolean>) : {};
+		} catch {
+			localStorage.removeItem(CHECKLIST_STORAGE_KEY);
+			checklistState = {};
+		}
+	}
+
+	function setChecklistItem(providerId: ProviderId, item: string, checked: boolean) {
+		checklistState = {
+			...checklistState,
+			[checklistKey(providerId, item)]: checked
+		};
+		try {
+			localStorage.setItem(CHECKLIST_STORAGE_KEY, JSON.stringify(checklistState));
+		} catch {
+			// Local storage can be unavailable in private or restricted contexts.
+		}
+	}
+
+	function checklistKey(providerId: ProviderId, item: string) {
+		return `${providerId}:${item}`;
+	}
+
+	function checklistDone(providerId: ProviderId, item: string) {
+		return checklistState[checklistKey(providerId, item)] === true;
+	}
+
+	function checklistProgress(providerId: ProviderId) {
+		const items = PROVIDER_CHECKS[providerId];
+		const checked = items.filter((item) => checklistDone(providerId, item)).length;
+		return `${checked}/${items.length}`;
 	}
 
 	function shouldRefreshOnMount(nextPayload: UsagePayload | null) {
@@ -416,7 +482,7 @@
 				tone: 'text-cyan-400',
 				visible: days > 0 || hours > 0 || minutes === 0
 			},
-			{ value: match[3] ?? '0', unit: 'm', tone: 'text-amber-300', visible: minutes > 0 }
+			{ value: match[3] ?? '0', unit: 'm', tone: 'text-amber-300', visible: true }
 		];
 
 		return parts.filter((part) => part.visible);
@@ -552,15 +618,27 @@
 	}
 
 	function statusTone(provider: ProviderUsage) {
+		if (needsProviderCheck(provider)) {
+			return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
+		}
 		if (provider.status === 'ok') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
 		if (provider.status === 'partial') return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
 		return 'border-rose-500/30 bg-rose-500/10 text-rose-700';
 	}
 
 	function statusLabel(provider: ProviderUsage) {
+		if (needsProviderCheck(provider)) return 'Needs check';
 		if (provider.status === 'ok') return 'Live';
 		if (provider.status === 'partial') return 'Partial';
 		return 'Unavailable';
+	}
+
+	function needsProviderCheck(provider: ProviderUsage) {
+		return provider.message.startsWith('Previous data kept;');
+	}
+
+	function providerFootnote(provider: ProviderUsage) {
+		return needsProviderCheck(provider) ? null : provider.message;
 	}
 
 	function openUsageUrl(url: string) {
@@ -921,7 +999,9 @@
 						<div
 							class="mt-auto flex items-center justify-between gap-3 pt-4 text-xs text-muted-foreground"
 						>
-							<span>{provider.message}</span>
+							{#if providerFootnote(provider)}
+								<span>{providerFootnote(provider)}</span>
+							{/if}
 							{#if provider.usageUrl}
 								<button
 									type="button"
@@ -938,6 +1018,58 @@
 			</div>
 		{/if}
 	</section>
+
+	{#if providers.length > 0}
+		<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
+			<div class="rounded-md border bg-card">
+				<div class="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
+					<div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+						<AlertTriangle class="size-3.5" />
+						<span>Checks</span>
+					</div>
+					<div class="flex flex-wrap items-center gap-1">
+						{#each providers as provider (provider.provider)}
+							<button
+								type="button"
+								class={`h-7 cursor-pointer rounded-md border px-2 text-xs font-medium transition-colors ${
+									activeCheckProvider === provider.provider
+										? 'border-cyan-300/30 bg-cyan-500/10 text-cyan-200'
+										: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground'
+								}`}
+								onclick={() => (activeCheckProvider = provider.provider)}
+							>
+								{provider.name}
+								<span class="ml-1 font-mono text-[10px] tabular-nums"
+									>{checklistProgress(provider.provider)}</span
+								>
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="grid gap-2 p-3 sm:grid-cols-2">
+					{#each PROVIDER_CHECKS[activeCheckProvider] as item (item)}
+						<label
+							class="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs text-foreground/80 transition-colors hover:border-cyan-300/25 hover:bg-cyan-500/5"
+						>
+							<input
+								type="checkbox"
+								class="size-3.5 accent-cyan-400"
+								checked={checklistDone(activeCheckProvider, item)}
+								onchange={(event) =>
+									setChecklistItem(
+										activeCheckProvider,
+										item,
+										(event.currentTarget as HTMLInputElement).checked
+									)}
+							/>
+							<span>{item}</span>
+						</label>
+					{/each}
+				</div>
+			</div>
+		</section>
+	{/if}
 
 	{#if showLogs}
 		<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">

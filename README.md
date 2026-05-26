@@ -20,7 +20,7 @@
     <img src="https://img.shields.io/badge/Wiki-1e293b?style=for-the-badge&logo=gitbook&logoColor=white" alt="Wiki" />
   </a>
 
-  <br /><br />
+<br /><br />
 
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?style=flat-square&logo=svelte&logoColor=white" />
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" />
@@ -29,7 +29,7 @@
   <img src="https://img.shields.io/badge/license-MIT-a855f7?style=flat-square" />
   <img src="https://img.shields.io/badge/Windows-only-0078D4?style=flat-square&logo=windows&logoColor=white" />
 
-  <br /><br />
+<br /><br />
 
   <p>
     <a href="#-install">Install</a> ·
@@ -66,14 +66,14 @@ flowchart LR
 
 ## ✨ Features
 
-| | Feature | Description |
-|:---:|:---|:---|
-| ⚡ | **Multi-provider** | Runs Claude `/usage` · Codex `/status` · Gemini `/model` in virtual terminals |
-| ↻ | **Smart retry** | Up to 5 attempts with phase diagnostics and automatic slash-command recovery |
-| 📊 | **Weekly Pace card** | Usage bar vs. 20 % minimum threshold — see if you're on track |
-| ⏱ | **Reset countdown** | Live per-provider countdown to next usage reset |
-| 📡 | **Live server logs** | SSE stream rendered directly in the browser — no polling |
-| 💾 | **Dual cache** | Server-side JSON history (10-min buckets) + `localStorage` fallback for instant first paint |
+|     | Feature              | Description                                                                                 |
+| :-: | :------------------- | :------------------------------------------------------------------------------------------ |
+| ⚡  | **Multi-provider**   | Runs Claude `/usage` · Codex `/status` · Gemini `/model` in virtual terminals               |
+|  ↻  | **Smart retry**      | Up to 5 attempts with phase diagnostics and automatic slash-command recovery                |
+| 📊  | **Weekly Pace card** | Usage bar vs. 20 % minimum threshold — see if you're on track                               |
+|  ⏱  | **Reset countdown**  | Live per-provider countdown to next usage reset                                             |
+| 📡  | **Live server logs** | SSE stream rendered directly in the browser — no polling                                    |
+| 💾  | **Dual cache**       | Server-side JSON history (10-min buckets) + `localStorage` fallback for instant first paint |
 
 <br />
 
@@ -130,13 +130,13 @@ pnpm install
 <details>
 <summary>System requirements</summary>
 
-| Requirement | Why |
-|:---|:---|
-| Windows | `node-pty` and the server launcher are Windows-only |
-| Node.js 20+ | Runtime — auto-installed by one-liner if missing |
-| pnpm | Package manager — auto-installed by one-liner if missing |
-| **Visual Studio Build Tools (C++)** | `node-pty` compiles native code during `pnpm install` |
-| Python 3 | Used by `node-gyp` during native compilation |
+| Requirement                         | Why                                                      |
+| :---------------------------------- | :------------------------------------------------------- |
+| Windows                             | `node-pty` and the server launcher are Windows-only      |
+| Node.js 20+                         | Runtime — auto-installed by one-liner if missing         |
+| pnpm                                | Package manager — auto-installed by one-liner if missing |
+| **Visual Studio Build Tools (C++)** | `node-pty` compiles native code during `pnpm install`    |
+| Python 3                            | Used by `node-gyp` during native compilation             |
 
 </details>
 
@@ -172,13 +172,21 @@ Then re-run `pnpm install`.
 <details>
 <summary>Custom CLI working directory</summary>
 
-CLIs default to running in `%USERPROFILE%`. To change this, copy `.env.example` → `.env` and set:
+The collector tries CLI working directories in this order:
 
-```
+1. `AI_USAGE_CWD`
+2. `AI_USAGE_CWD_CANDIDATES`, split by semicolon
+3. `%USERPROFILE%`
+4. the dashboard install path
+
+To change the preferred path or add fallbacks, copy `.env.example` → `.env` and set:
+
+```text
 AI_USAGE_CWD=D:\your\path
+AI_USAGE_CWD_CANDIDATES=D:\Code\_temp;C:\Users\yourname;D:\Code\_toolkit\aI_usage
 ```
 
-All CLIs must be pre-authenticated in that directory.
+Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`.
 
 </details>
 
@@ -186,11 +194,11 @@ All CLIs must be pre-authenticated in that directory.
 
 ## 🖥 CLI Targets
 
-| Provider | Command | Slash | Shows |
-|:---|:---|:---|:---|
-| Claude | `claude` | `/usage` | current session + weekly usage |
-| Codex | `codex` | `/status` | 5h limit + weekly limit |
-| Gemini CLI | `gemini --skip-trust` | `/model` | per-model usage + resets |
+| Provider   | Command               | Slash     | Shows                          |
+| :--------- | :-------------------- | :-------- | :----------------------------- |
+| Claude     | `claude`              | `/usage`  | current session + weekly usage |
+| Codex      | `codex`               | `/status` | 5h limit + weekly limit        |
+| Gemini CLI | `gemini --skip-trust` | `/model`  | per-model usage + resets       |
 
 > `--skip-trust` bypasses Gemini's workspace prompt. Claude and Codex don't use equivalent flags — they affect auth policy and break collection.
 
@@ -217,14 +225,14 @@ $env:AI_USAGE_DEBUG_LOGS=1; .\scripts\start-server.ps1
 
 All runtime files are git-ignored.
 
-| Path | Description |
-|:---|:---|
-| `data/usage-history.json` | Full history — 10-min buckets, last 12 kept |
-| `data/usage-latest.json` | Latest payload served by `/api/usage` |
-| `data/raw/{provider}-latest.txt` | Last raw CLI terminal output |
-| `data/raw/{provider}-last-failure.txt` | Last failed capture |
-| `data/logs/collector.log` | Collector diagnostics |
-| `data/logs/server.log` | Server log |
+| Path                                   | Description                                 |
+| :------------------------------------- | :------------------------------------------ |
+| `data/usage-history.json`              | Full history — 10-min buckets, last 12 kept |
+| `data/usage-latest.json`               | Latest payload served by `/api/usage`       |
+| `data/raw/{provider}-latest.txt`       | Last raw CLI terminal output                |
+| `data/raw/{provider}-last-failure.txt` | Last failed capture                         |
+| `data/logs/collector.log`              | Collector diagnostics                       |
+| `data/logs/server.log`                 | Server log                                  |
 
 <br />
 
@@ -243,11 +251,11 @@ All runtime files are git-ignored.
 
 ## 📖 Docs
 
-| | |
-|:---|:---|
-| [Architecture](docs/architecture.md) | Implementation structure, API contract, refresh and cache flow |
-| [Fix Checklist](docs/fix_check.md) | Step-by-step diagnostics for collection and parser errors |
-| [Wiki](https://github.com/savvy773/ai_usage/wiki) | Quick Start, API Reference, and more |
+|                                                   |                                                                |
+| :------------------------------------------------ | :------------------------------------------------------------- |
+| [Architecture](docs/architecture.md)              | Implementation structure, API contract, refresh and cache flow |
+| [Fix Checklist](docs/fix_check.md)                | Step-by-step diagnostics for collection and parser errors      |
+| [Wiki](https://github.com/savvy773/ai_usage/wiki) | Quick Start, API Reference, and more                           |
 
 <br />
 

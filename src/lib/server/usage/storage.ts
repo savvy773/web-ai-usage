@@ -110,7 +110,7 @@ function resolveProviderSnapshot(provider: ProviderUsage, history: UsageBucket[]
 
 	return {
 		...previous,
-		status: provider.status,
+		status: 'ok',
 		message: `Previous data kept; latest refresh ${provider.status}: ${provider.message}`,
 		collectionDurationMs: provider.collectionDurationMs,
 		rawPreview: provider.rawPreview

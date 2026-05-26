@@ -22,6 +22,7 @@ const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 3000;
 const MAX_CODEX_STATUS_REFRESH_RETRIES = 4;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
+const CODEX_UPDATE_SKIP_OPTION = '2';
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
 const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
@@ -45,11 +46,21 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	let latestResult: ProviderUsage | null = null;
 	let hadReportableFailure = false;
 	let transientStartupMisses = 0;
+	let workingDirectoryIndex = 0;
+	const workingDirectories = CLI_COLLECTION_CONFIG.workingDirectories;
 
 	for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
 		let output = '';
+		const workingDirectory =
+			workingDirectories[Math.min(workingDirectoryIndex, workingDirectories.length - 1)];
 		try {
-			output = await runSlashCommand(provider.id, provider.command, provider.slashCommand, attempt);
+			output = await runSlashCommand(
+				provider.id,
+				provider.command,
+				provider.slashCommand,
+				attempt,
+				workingDirectory
+			);
 			latestResult = parseProviderUsage(provider.id, output);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown collection error';
@@ -61,6 +72,8 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		await writeCollectorDebugSnapshot(provider.id, output, latestResult, {
 			attempt,
 			maxAttempts: MAX_COLLECTION_ATTEMPTS,
+			workingDirectory,
+			workingDirectoryCandidates: [...workingDirectories],
 			phase: diagnostics.phase,
 			markers: diagnostics.markers,
 			parseDiagnostics: diagnostics.parseDetails,
@@ -81,20 +94,29 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 		}
 
 		const details = describeCollectionResult(diagnostics);
+		const shouldTryNextWorkingDirectory =
+			workingDirectoryIndex < workingDirectories.length - 1 &&
+			shouldAdvanceWorkingDirectory(provider.id, diagnostics);
 
 		if (attempt < MAX_COLLECTION_ATTEMPTS) {
 			const retryDelayMs = collectionRetryDelayMs(attempt);
+			const nextWorkingDirectory = shouldTryNextWorkingDirectory
+				? workingDirectories[workingDirectoryIndex + 1]
+				: null;
+			if (nextWorkingDirectory) {
+				workingDirectoryIndex += 1;
+			}
 			if (transientStartupMiss) {
 				transientStartupMisses += 1;
 				if (DEBUG_COLLECTOR_LOGS) {
 					console.info(
-						`[collector] ${provider.name} startup redraw only on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}; retrying in ${formatDuration(retryDelayMs)}. ${details}`
+						`[collector] ${provider.name} startup redraw only on attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}; retrying in ${formatDuration(retryDelayMs)}${formatWorkingDirectorySwitch(nextWorkingDirectory)}. ${details}`
 					);
 				}
 			} else {
 				hadReportableFailure = true;
 				console.info(
-					`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(retryDelayMs)}. ${details}`
+					`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}; retrying in ${formatDuration(retryDelayMs)}${formatWorkingDirectorySwitch(nextWorkingDirectory)}. ${details}`
 				);
 			}
 			await delay(retryDelayMs);
@@ -120,16 +142,17 @@ async function runSlashCommand(
 	providerId: ProviderId,
 	command: string,
 	slashCommand: string,
-	attempt: number
+	attempt: number,
+	workingDirectory: string
 ) {
 	try {
-		return await runPtySlashCommand(providerId, command, slashCommand, attempt);
+		return await runPtySlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown node-pty error';
 		console.info(
 			`[collector] ${providerId} node-pty path failed; trying pipe fallback. ${message}`
 		);
-		return await runPipeSlashCommand(providerId, command, slashCommand, attempt);
+		return await runPipeSlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
 	}
 }
 
@@ -137,7 +160,8 @@ async function runPtySlashCommand(
 	providerId: ProviderId,
 	command: string,
 	slashCommand: string,
-	attempt: number
+	attempt: number,
+	workingDirectory: string
 ) {
 	const pty = (await import('node-pty')) as PtyModule;
 
@@ -148,6 +172,7 @@ async function runPtySlashCommand(
 		let wroteSlashCommand = false;
 		let codexStatusRefreshRetryCount = 0;
 		let slashReissueCount = 0;
+		let codexUpdatePromptSkipped = false;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
@@ -170,7 +195,7 @@ async function runPtySlashCommand(
 				name: 'xterm-256color',
 				cols: providerId === 'gemini' ? 160 : 120,
 				rows: 36,
-				cwd: CLI_COLLECTION_CONFIG.workingDirectory,
+				cwd: workingDirectory,
 				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
 				useConptyDll: true
 			}
@@ -235,7 +260,11 @@ async function runPtySlashCommand(
 		const writeSlashCommandNow = () => {
 			safeWrite(`${slashCommand}\r`, 'Failed to write slash command.');
 			if (providerId === 'codex') {
-				schedule(() => safeWrite('\r', 'Failed to confirm slash command.'), 400);
+				schedule(() => {
+					if (shouldConfirmCodexSlashCommand(output, slashCommand)) {
+						safeWrite('\r', 'Failed to confirm slash command.');
+					}
+				}, 400);
 			}
 			if (providerId === 'gemini') {
 				const startedAt = performance.now();
@@ -261,6 +290,10 @@ async function runPtySlashCommand(
 		const writeSlashCommandFallback = () => {
 			if (wroteSlashCommand) return;
 			if (providerId === 'codex' && shouldWaitForCodexReady(output)) {
+				schedule(writeSlashCommandFallback, 1000);
+				return;
+			}
+			if (providerId === 'claude' && shouldWaitForClaudeReady(output)) {
 				schedule(writeSlashCommandFallback, 1000);
 				return;
 			}
@@ -305,6 +338,14 @@ async function runPtySlashCommand(
 		terminal.onData((chunk) => {
 			output = appendCapturedOutput(output, chunk);
 
+			if (providerId === 'codex' && !codexUpdatePromptSkipped && hasCodexUpdatePrompt(output)) {
+				codexUpdatePromptSkipped = true;
+				schedule(
+					() => safeWrite(`${CODEX_UPDATE_SKIP_OPTION}\r`, 'Failed to skip Codex update prompt.'),
+					250
+				);
+			}
+
 			if (!wroteCommand && isShellReady(output)) {
 				writeCommand();
 			}
@@ -344,12 +385,20 @@ function isShellReady(output: string) {
 function isCliReady(providerId: ProviderId, output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
 	if (providerId === 'claude') {
+		if (hasClaudeTrustPrompt(tail)) return false;
 		return /\? for shortcuts|Advisor Tool|Try ["“]|Welcome back/i.test(tail);
 	}
 	if (providerId === 'codex') {
+		if (hasCodexUpdatePromptText(tail)) return false;
 		return isCodexReadyTail(tail);
 	}
 	return /Type your message|workspace\s+\(\/directory\)/i.test(tail);
+}
+
+function shouldConfirmCodexSlashCommand(output: string, slashCommand: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	if (hasCodexUpdatePromptText(tail)) return false;
+	return hasVisibleSlashBuffer(tail, slashCommand);
 }
 
 function shouldConfirmGeminiSlashCommand(output: string, slashCommand: string) {
@@ -383,7 +432,17 @@ function shouldWaitForCodexReady(output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
 	if (isCodexReadyTail(tail)) return false;
 
-	return /booting\s+mcp\s+server|model:\s*loading|Use \/skills/i.test(tail);
+	return (
+		hasCodexUpdatePromptText(tail) ||
+		/booting\s+mcp\s+server|model:\s*loading|Use \/skills/i.test(tail)
+	);
+}
+
+function shouldWaitForClaudeReady(output: string) {
+	const tail = stripTerminalOutput(output.slice(-8000));
+	if (isCliReady('claude', output)) return false;
+
+	return hasClaudeTrustPrompt(tail) || /Accessing\s+workspace|Quick\s+safety\s+check/i.test(tail);
 }
 
 function shouldWaitForGeminiReady(output: string) {
@@ -411,6 +470,10 @@ function shouldReissueSlashCommand(providerId: ProviderId, output: string, slash
 		return !hasGeminiModelScreenText(tail);
 	}
 
+	if (providerId === 'claude') {
+		return !/\bCurrent\s+session\b|\bCurrent\s+week\b|\d+(?:\.\d+)?\s*%\s+used/i.test(tail);
+	}
+
 	return false;
 }
 
@@ -421,6 +484,20 @@ function hasVisibleSlashBuffer(value: string, slashCommand: string) {
 function hasCodexStatusRefreshRequested(output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
 	return /Limits:\s*refresh requested;\s*run \/status again shortly/i.test(tail);
+}
+
+function hasCodexUpdatePrompt(output: string) {
+	return hasCodexUpdatePromptText(stripTerminalOutput(output.slice(-8000)));
+}
+
+function hasCodexUpdatePromptText(value: string) {
+	return /Update available|Update now|Skip until next version/i.test(value);
+}
+
+function hasClaudeTrustPrompt(value: string) {
+	return /Quick\s+safety\s+check|Yes,\s+I\s+trust\s+this\s+folder|Accessing\s+workspace/i.test(
+		value
+	);
 }
 
 function latestCodexLoadingIndex(tail: string) {
@@ -470,14 +547,15 @@ async function runPipeSlashCommand(
 	providerId: ProviderId,
 	command: string,
 	slashCommand: string,
-	attempt: number
+	attempt: number,
+	workingDirectory: string
 ) {
 	return await new Promise<string>((resolve, reject) => {
 		let output = '';
 		let settled = false;
 
 		const child = spawn(command, [], {
-			cwd: CLI_COLLECTION_CONFIG.workingDirectory,
+			cwd: workingDirectory,
 			env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
 			shell: true,
 			windowsHide: true
@@ -601,6 +679,7 @@ function collectionPhase(
 	if (result.status === 'ok') return 'usage-output-complete';
 
 	if (providerId === 'codex') {
+		if (hasCodexUpdatePromptText(output)) return 'codex-update-prompt';
 		if (markers.includes('status-refresh-requested')) return 'codex-status-refresh-pending';
 		if (shouldWaitForCodexReady(output)) return 'codex-loading';
 		if (/\/status/i.test(output)) return 'codex-status-output-without-limits';
@@ -619,6 +698,7 @@ function collectionPhase(
 		return 'gemini-startup-or-redraw';
 	}
 
+	if (providerId === 'claude' && hasClaudeTrustPrompt(output)) return 'claude-trust-prompt';
 	if (isCliReady(providerId, output)) return `${providerId}-ready-without-usage-output`;
 	return `${providerId}-startup-or-redraw`;
 }
@@ -744,6 +824,36 @@ function isTransientStartupMiss(
 	return true;
 }
 
+function shouldAdvanceWorkingDirectory(
+	providerId: ProviderId,
+	diagnostics: ReturnType<typeof buildCollectionDiagnostics>
+) {
+	if (diagnostics.result.status === 'ok') return false;
+
+	if (providerId === 'claude') {
+		return (
+			diagnostics.phase === 'claude-trust-prompt' ||
+			diagnostics.phase === 'claude-ready-without-usage-output'
+		);
+	}
+
+	if (providerId === 'codex') {
+		return (
+			diagnostics.phase === 'codex-update-prompt' ||
+			diagnostics.phase === 'codex-ready-without-status-command' ||
+			(diagnostics.phase === 'codex-startup-or-redraw' && diagnostics.markers.length === 0)
+		);
+	}
+
+	if (providerId === 'gemini') {
+		return (
+			diagnostics.phase === 'gemini-auth-wait' || diagnostics.phase === 'gemini-startup-or-redraw'
+		);
+	}
+
+	return false;
+}
+
 function isStructuredGeminiBarUsageRow(rawLine: string, normalizedLine: string) {
 	const barMatch = rawLine.match(GEMINI_BAR_RUN_PATTERN);
 	if (!barMatch || barMatch.index === undefined) return false;
@@ -773,6 +883,10 @@ function normalizeCollectorMarkerLine(line: string) {
 
 function formatDuration(ms: number) {
 	return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatWorkingDirectorySwitch(nextWorkingDirectory: string | null) {
+	return nextWorkingDirectory ? ` using ${nextWorkingDirectory}` : '';
 }
 
 function delay(ms: number) {
