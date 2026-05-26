@@ -1,109 +1,110 @@
+<div align="center">
+
 # AI Usage Dashboard
 
-로컬 Claude, Codex, Gemini CLI 사용량을 한 화면에서 확인하는 SvelteKit 대시보드입니다.
+**Monitor Claude, Codex, and Gemini CLI usage in one local dashboard.**
 
-브라우저가 CLI를 직접 실행하지 않습니다. SvelteKit 서버 API가 로컬 CLI를 가상 터미널로 실행해 사용량을 수집하고, 결과를 `data/usage-history.json`에 저장합니다. 화면은 저장된 JSON과 브라우저 캐시를 먼저 보여준 뒤 백그라운드 refresh 결과로 갱신됩니다. 브라우저에서 F5/reload를 누르면 기존 payload를 먼저 표시한 다음 `/api/usage/refresh`를 호출해 새 수집을 시작합니다.
+[![SvelteKit](https://img.shields.io/badge/SvelteKit-2-FF3E00?style=flat-square&logo=svelte&logoColor=white)](https://kit.svelte.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38BDF8?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+[![pnpm](https://img.shields.io/badge/pnpm-required-F69220?style=flat-square&logo=pnpm&logoColor=white)](https://pnpm.io)
+[![License](https://img.shields.io/badge/license-MIT-A855F7?style=flat-square)](LICENSE)
 
-## 주요 기능
+[Landing Page](https://savvy773.github.io/ai_usage/) · [Architecture](docs/architecture.md) · [Fix Checklist](docs/fix_check.md)
 
-- Claude `/usage`, Codex `/status`, Gemini CLI `/model` 수집
-- provider별 상태, 수집 시간, reset countdown, 사용률 bar 표시
-- Claude/Codex의 current, week usage 표시
-- Gemini CLI의 Flash, Flash Lite, Pro 모델 사용률 표시
-- TUI 출력 정규화: ANSI/OSC/control code, cursor movement, ESC가 빠진 CSI 조각, 그래프/box 문자 제거
-- Gemini 다중 redraw 대응: 최신 `Model usage` 화면의 `label + bar + percent + Resets` row 구조 기준 파싱
-- 주간 Pace 카드: 실제 사용률 bar와 최소 20%에서 시작하는 목표 threshold marker 비교
-- 자동 refresh, 수동 refresh, 브라우저 reload refresh, refresh cooldown
-- Collector 재시도: provider별 최대 5회, phase 진단, slash command 소실 시 같은 세션 재입력
-- 서버 로그 패널: `/api/server/logs` SSE 기반 실시간 로그 표시
-- 서버 종료 버튼: `/api/server/stop` 호출
-- 서버 JSON history와 브라우저 `localStorage` fallback 캐시
+</div>
 
-## 빠른 실행
+---
 
-```powershell
-.\scripts\start-server.ps1
-```
+The browser does not execute CLIs directly. A SvelteKit server API runs each CLI in a virtual terminal via **node-pty**, collects usage data, and persists results to `data/usage-history.json`. The UI renders from cached JSON first, then refreshes in the background.
 
-브라우저:
-
-```text
-http://127.0.0.1:5173/
-```
-
-자주 쓰는 옵션:
-
-```powershell
-.\scripts\start-server.ps1 -Open
-.\scripts\start-server.ps1 -Port 5173
-.\scripts\start-server.ps1 -Mode preview
-.\scripts\start-server.ps1 -NoRestart
-.\scripts\start-server.ps1 -Status
-.\scripts\start-server.ps1 -Help
-```
-
-`start-server.ps1`은 기본적으로 `--strictPort`를 사용합니다. 같은 프로젝트에서 실행한 기존 dashboard 서버만 식별해서 재시작하고, 다른 프로세스가 포트를 사용 중이면 중지하지 않고 실패합니다.
-
-## 개발
+## Quick Start
 
 ```powershell
 pnpm install
-pnpm dev
+.\scripts\start-server.ps1 -Open
 ```
 
-검사:
+Open in browser → `http://127.0.0.1:5173`
+
+<details>
+<summary>All start-server options</summary>
 
 ```powershell
-pnpm check
-pnpm build
+.\scripts\start-server.ps1 -Open          # open browser automatically
+.\scripts\start-server.ps1 -Port 5173     # specify port (default: 5173)
+.\scripts\start-server.ps1 -Mode preview  # production preview build
+.\scripts\start-server.ps1 -NoRestart     # skip server restart
+.\scripts\start-server.ps1 -Status        # show server status
+.\scripts\start-server.ps1 -Help          # show all options
 ```
 
-패키지 매니저는 `pnpm`을 기준으로 합니다.
+`start-server.ps1` uses `--strictPort`. It only restarts a server it previously started and will fail (without killing) if another process owns the port.
 
-## CLI 수집 대상
+</details>
 
-현재 CLI working directory:
+## Features
 
-```text
-D:\Code\_temp
+| | Feature | Description |
+|---|---|---|
+| ⚡ | Multi-provider collection | Claude `/usage`, Codex `/status`, Gemini CLI `/model` via virtual terminals |
+| ↻ | Smart retry | Up to 5 attempts per provider; re-enters slash commands on loss |
+| 📊 | Weekly Pace card | Actual usage bar vs. minimum 20% threshold marker |
+| ⏱ | Reset countdown | Live countdown to next reset per provider |
+| 📡 | Live server logs | SSE-based real-time log panel — no polling |
+| 💾 | Dual cache | Server-side JSON history + browser `localStorage` fallback |
+
+## CLI Targets
+
+Working directory: `D:\Code\_temp`
+
+| Provider | Command | Slash | Display |
+|---|---|---|---|
+| Claude | `claude` | `/usage` | current & weekly usage |
+| Codex | `codex` | `/status` | current & weekly usage |
+| Gemini CLI | `gemini --skip-trust` | `/model` | per-model usage rates |
+
+> Gemini uses `--skip-trust` to bypass workspace prompts. Claude/Codex omit similar flags as they affect auth policy and can cause collection failures.
+
+## Development
+
+```powershell
+pnpm install
+pnpm dev       # dev server
+pnpm check     # type check
+pnpm build     # production build
 ```
 
-| Provider   | Command               | Slash command | 표시 방식           |
-| ---------- | --------------------- | ------------- | ------------------- |
-| Claude     | `claude`              | `/usage`      | current, week usage |
-| Codex      | `codex`               | `/status`     | current, week usage |
-| Gemini CLI | `gemini --skip-trust` | `/model`      | model별 usage       |
+Enable verbose collector output:
 
-Gemini CLI만 `--skip-trust`를 사용합니다. Claude/Codex의 유사 옵션은 workspace trust 생략이 아니라 권한/승인 정책 변경에 가깝고, 현재 `/usage`, `/status` 수집에서는 속도 개선이 없거나 수집 실패를 만들 수 있어 기본 command를 유지합니다.
+```powershell
+$env:AI_USAGE_DEBUG_LOGS=1; .\scripts\start-server.ps1
+```
 
-CLI 실행과 파싱의 자세한 흐름은 [docs/architecture.md](docs/architecture.md)를 참고하세요.
+## Data Files
 
-## 문서
+| Path | Description |
+|---|---|
+| `data/usage-history.json` | Full history — 10-min buckets, last 12 kept |
+| `data/usage-latest.json` | Latest payload + last 6 buckets |
+| `data/raw/{provider}-latest.txt` | Raw CLI tail |
+| `data/raw/{provider}-last-failure.txt` | Last failed attempt raw |
+| `.server/ai-usage-dashboard.json` | Server state |
+| `data/logs/server.log` | Server log |
+| `data/logs/collector.log` | Collector log |
 
-- [Architecture](docs/architecture.md): 구현 구조, API contract, refresh/cache 동작, 운영 메모
-- [Fix Checklist](docs/fix_check.md): 오류 발생 시 밑단부터 좁히는 진단 체크리스트
-- [HTML Overview](docs/ai_dash.html): 브라우저에서 바로 열 수 있는 공유용 문서
+`data/` and `.server/` are git-ignored.
 
-## 데이터
+## Tech Stack
 
-- usage history: `data/usage-history.json`
-- 화면 확인용 최신 payload: `data/usage-latest.json`
-- CLI raw tail: `data/raw/{provider}-latest.txt`
-- 파싱 결과 snapshot: `data/raw/{provider}-latest.parsed.json`
-- 마지막 실패 attempt raw: `data/raw/{provider}-last-failure.txt`
-- 마지막 실패 attempt 파싱 snapshot: `data/raw/{provider}-last-failure.parsed.json`
-- 서버 상태 파일: `.server/ai-usage-dashboard.json`
-- 서버 로그: `data/logs/server.log`
-- 오류 로그: `data/logs/server-error.log`, `data/logs/server-startup-error.log`
-- collector 로그: `data/logs/collector.log`
-- history bucket: 10분 단위
-- 보관 개수: 최근 12개 bucket, 최소 5개 이상
-- 브라우저 캐시 key: `ai-usage-payload-cache`
+- **[SvelteKit 2](https://kit.svelte.dev/)** — full-stack framework
+- **[Tailwind CSS v4](https://tailwindcss.com/)** — styling
+- **[shadcn-svelte](https://shadcn-svelte.com/)** — UI components
+- **[node-pty](https://github.com/microsoft/node-pty)** — virtual terminal for CLI execution
+- **[Geist](https://vercel.com/font)** — font
 
-`data/usage-history.json`이 기능 동작 확인의 기준 파일입니다. refresh가 성공하면 이 파일의 최신 `history[].providers`에 provider별 `status`, `message`, `windows`, `modelUsages`가 저장됩니다. Gemini는 `modelUsages[]`의 `label`, `percent`, `resetAt`, `remainingText`를 보면 됩니다.
+## Docs
 
-파싱 오류 확인은 `data/raw/gemini-last-failure.txt`처럼 provider별 마지막 실패 raw를 먼저 보고, 현재 최종 상태는 `data/raw/gemini-latest.txt` 또는 `data/raw/claude-latest.txt`에서 확인합니다. 화면에 뿌릴 최신 데이터와 최근 6개 bucket은 `data/usage-latest.json`에서 바로 확인할 수 있습니다.
-
-Codex startup redraw만 잡힌 retry는 일반 collector 로그와 `last-failure`를 남기지 않습니다. 따라서 `collector.log`의 `recovered on attempt ...`는 실제 reportable failure 뒤 성공한 경우에만 봅니다. startup redraw 흐름까지 보고 싶으면 `AI_USAGE_DEBUG_LOGS=1`로 서버를 시작합니다.
-
-`data/`와 `.server/`는 Git ignore 대상입니다. `rawPreview` 같은 raw terminal output은 history JSON에 저장하지 않고 `data/raw/`에 최신 tail만 별도 저장합니다.
+- **[Architecture](docs/architecture.md)** — implementation structure, API contract, refresh/cache flow
+- **[Fix Checklist](docs/fix_check.md)** — step-by-step diagnostics for collection errors
+- **[Landing Page](https://savvy773.github.io/ai_usage/)** — project overview
