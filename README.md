@@ -20,6 +20,16 @@ The browser does not execute CLIs directly. A SvelteKit server API runs each CLI
 
 ## Quick Start
 
+**One-liner install (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/savvy773/ai_usage/main/scripts/install.ps1 | iex
+```
+
+Clones the repo, installs dependencies, and optionally launches the dashboard.
+
+**Manual:**
+
 ```powershell
 pnpm install
 .\scripts\start-server.ps1 -Open
