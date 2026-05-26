@@ -428,7 +428,7 @@
       border-color:rgba(124,106,255,.45); color:var(--txt); background:var(--sur2);
       box-shadow: 0 0 14px rgba(124,106,255,.12);
     }
-    .sd { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .cdot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 
     /* ─── FOOTER ─── */
     footer {
@@ -462,7 +462,7 @@
 
     @media(max-width:640px){
       .nav-ul { display:none; }
-      footer { flex-direction:column; align-items:flex-start; }
+      footer { grid-template-columns:1fr; }
       .stats-row { grid-template-columns:1fr 1fr; }
       .stats-row .stat:nth-child(2){ border-right:none; }
       .stats-row .stat:nth-child(3){ border-top:1px solid var(--bdr); grid-column:span 2; }
@@ -682,13 +682,13 @@
   </div>
 
   <div class="slist fi">
-    <div class="schip"><span class="sd" style="background:#ff3e00"></span>SvelteKit 2</div>
-    <div class="schip"><span class="sd" style="background:#38bdf8"></span>Tailwind CSS v4</div>
-    <div class="schip"><span class="sd" style="background:#3178c6"></span>TypeScript</div>
-    <div class="schip"><span class="sd" style="background:#a5a0ff"></span>shadcn-svelte</div>
-    <div class="schip"><span class="sd" style="background:#22d3ee"></span>node-pty</div>
-    <div class="schip"><span class="sd" style="background:#fbbf24"></span>Vite 8</div>
-    <div class="schip"><span class="sd" style="background:#e8e8e8"></span>Geist Font</div>
+    <div class="schip"><span class="cdot" style="background:#ff3e00"></span>SvelteKit 2</div>
+    <div class="schip"><span class="cdot" style="background:#38bdf8"></span>Tailwind CSS v4</div>
+    <div class="schip"><span class="cdot" style="background:#3178c6"></span>TypeScript</div>
+    <div class="schip"><span class="cdot" style="background:#a5a0ff"></span>shadcn-svelte</div>
+    <div class="schip"><span class="cdot" style="background:#22d3ee"></span>node-pty</div>
+    <div class="schip"><span class="cdot" style="background:#fbbf24"></span>Vite 8</div>
+    <div class="schip"><span class="cdot" style="background:#e8e8e8"></span>Geist Font</div>
   </div>
 </div>
 
