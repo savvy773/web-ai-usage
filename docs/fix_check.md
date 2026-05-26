@@ -54,6 +54,28 @@ Inside parsed snapshots, read:
 
 If raw output does not contain usage rows, the issue is collector timing/readiness. If raw output contains usage rows but parsed JSON misses them, the issue is parser normalization or provider parsing.
 
+## Follow-up Log Review
+
+After a successful live refresh, do not treat older `partial` lines as current failures by themselves. First compare the log timestamp with `data\usage-latest.json`:
+
+- `collector.log` timestamps are UTC.
+- The local dashboard clock is usually KST.
+- A later `usage-output-complete` snapshot supersedes an older `partial` attempt for the same provider.
+- If the latest `data\usage-latest.json` has all providers `ok`, watch the next scheduled refresh before changing code.
+
+For follow-up monitoring, check only lines after the latest successful `generatedAt` time unless the user is asking about an older incident.
+
+Escalate to collector/runtime investigation when new lines repeat:
+
+- `node-pty path failed; trying pipe fallback`
+- `markers=none`
+- startup/redraw phases such as `claude-startup-or-redraw`, `codex-startup-or-redraw`, or `gemini-startup-or-redraw`
+- final-attempt `partial` warnings for all providers in the same refresh bucket
+
+Escalate to parser investigation only when the raw or latest parsed snapshot clearly contains usage rows but the parsed provider result is still `partial`.
+
+`DEP0205` / `module.register()` warnings are non-blocking Vite/SvelteKit/Node deprecation warnings unless they are paired with request failures or server startup errors. Track them as dependency maintenance, not as usage parsing failures.
+
 ## Phase Meanings
 
 | Phase                                | Meaning                                            | Next check                                          |
