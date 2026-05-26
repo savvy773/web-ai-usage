@@ -165,8 +165,8 @@
     }
 
     h1 {
-      font-size: clamp(2.6rem,5.5vw,4.8rem);
-      font-weight:800; letter-spacing:-.045em; line-height:1.1;
+      font-size: clamp(2rem,4vw,3.6rem);
+      font-weight:800; letter-spacing:-.04em; line-height:1.1;
       margin-bottom:1.3rem; overflow:visible;
     }
 
@@ -433,20 +433,26 @@
     footer {
       position:relative; z-index:1;
       border-top:1px solid var(--bdr);
-      padding:2.25rem clamp(1.25rem,4vw,2rem);
-      display:flex; align-items:center; justify-content:space-between;
-      flex-wrap:wrap; gap:1rem;
+      padding:2rem clamp(1.25rem,4vw,2rem);
+      display:grid;
+      grid-template-columns: auto 1fr auto;
+      align-items:center; gap:1rem;
     }
 
-    .flog { display:flex; align-items:center; gap:.55rem; text-decoration:none; color:var(--txt2); font-size:.85rem; font-weight:600; }
-    .flks { display:flex; gap:.2rem; list-style:none; }
+    @media(max-width:700px){
+      footer { grid-template-columns:1fr; }
+      .flks { flex-wrap:wrap; }
+    }
+
+    .flog { display:flex; align-items:center; gap:.55rem; text-decoration:none; color:var(--txt2); font-size:.85rem; font-weight:600; white-space:nowrap; }
+    .flks { display:flex; gap:.2rem; list-style:none; justify-content:center; }
     .flks a {
       color:var(--txt2); text-decoration:none; font-size:.81rem;
       padding:.3rem .7rem; border-radius:6px;
-      transition:color .15s,background .15s;
+      transition:color .15s,background .15s; white-space:nowrap;
     }
     .flks a:hover { color:var(--txt); background:rgba(255,255,255,.05); }
-    .fcp { font-size:.72rem; color:var(--mut); }
+    .fcp { font-size:.72rem; color:var(--mut); text-align:right; white-space:nowrap; }
 
     /* ─── ANIMATIONS ─── */
     .fi { opacity:0; transform:translateY(20px); transition:opacity .6s ease, transform .6s ease; }
