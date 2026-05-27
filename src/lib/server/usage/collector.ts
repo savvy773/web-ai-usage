@@ -67,7 +67,15 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 			latestResult = parseProviderUsage(provider.id, '', message);
 		}
 
-		const diagnostics = buildCollectionDiagnostics(provider.id, output, latestResult);
+		let diagnostics = buildCollectionDiagnostics(provider.id, output, latestResult);
+		if (isPendingProviderRefresh(provider.id, diagnostics)) {
+			latestResult = {
+				...latestResult,
+				status: 'partial',
+				message: 'Codex limits may be stale; /status should be retried.'
+			};
+			diagnostics = buildCollectionDiagnostics(provider.id, output, latestResult);
+		}
 		const transientStartupMiss = isTransientStartupMiss(provider.id, diagnostics);
 		await writeCollectorDebugSnapshot(provider.id, output, latestResult, {
 			attempt,
@@ -306,8 +314,10 @@ async function runPtySlashCommand(
 
 		const retryCodexStatusAfterRefresh = () => {
 			if (settled || providerId !== 'codex') return;
-			if (!wroteSlashCommand || hasUsageOutput(providerId, output)) return;
-			if (!hasCodexStatusRefreshRequested(output)) return;
+			if (!wroteSlashCommand) return;
+			const statusRefreshRequested = hasCodexStatusRefreshRequested(output);
+			if (hasUsageOutput(providerId, output) && !statusRefreshRequested) return;
+			if (!statusRefreshRequested) return;
 			if (codexStatusRefreshRetryTimer) return;
 			if (codexStatusRefreshRetryCount >= MAX_CODEX_STATUS_REFRESH_RETRIES) return;
 
@@ -483,7 +493,14 @@ function hasVisibleSlashBuffer(value: string, slashCommand: string) {
 
 function hasCodexStatusRefreshRequested(output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
-	return /Limits:\s*refresh requested;\s*run \/status again shortly/i.test(tail);
+	return tail.split('\n').some((line) => isCodexStatusRefreshRequestedLine(line));
+}
+
+function isCodexStatusRefreshRequestedLine(line: string) {
+	return (
+		/Limits:\s*refresh requested;\s*run \/status again shortly/i.test(line) ||
+		/limits\s+may\s+be\s+stale\s*-\s*run\s+\/status\s+again\s+shortly/i.test(line)
+	);
 }
 
 function hasCodexUpdatePrompt(output: string) {
@@ -605,7 +622,11 @@ async function runPipeSlashCommand(
 function hasUsageOutput(providerId: ProviderId, output: string) {
 	const parsed = parseProviderUsage(providerId, output);
 	if (providerId === 'codex') {
-		return parsed.windows.fiveHour.percent !== null && parsed.windows.week.percent !== null;
+		return (
+			parsed.windows.fiveHour.percent !== null &&
+			parsed.windows.week.percent !== null &&
+			!hasCodexStatusRefreshRequested(output)
+		);
 	}
 
 	if (providerId === 'gemini') {
@@ -668,6 +689,13 @@ function describeCollectionResult(diagnostics: ReturnType<typeof buildCollection
 	}
 
 	return `(${detail.join('; ')})`;
+}
+
+function isPendingProviderRefresh(
+	providerId: ProviderId,
+	diagnostics: ReturnType<typeof buildCollectionDiagnostics>
+) {
+	return providerId === 'codex' && diagnostics.markers.includes('status-refresh-requested');
 }
 
 function collectionPhase(
@@ -762,9 +790,7 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 			normalizedLines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line))
 				? 'week-limit'
 				: null,
-			normalizedLines.some((line) =>
-				/Limits:\s*refresh requested;\s*run \/status again shortly/i.test(line)
-			)
+			normalizedLines.some((line) => isCodexStatusRefreshRequestedLine(line))
 				? 'status-refresh-requested'
 				: null
 		].filter((marker): marker is string => marker !== null);
