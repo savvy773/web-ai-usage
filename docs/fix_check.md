@@ -88,7 +88,7 @@ Escalate to parser investigation only when the raw or latest parsed snapshot cle
 | `claude-ready-without-usage-output`  | Claude opened, but `/usage` has not produced complete rows yet   | Retry same working directory; do not switch unless a trust prompt appears           |
 | `claude-trust-prompt`                | Claude is blocked by workspace trust                             | Next retry should move to another trusted candidate quickly                         |
 | `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial |
-| `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should happen                                          |
+| `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should clear the prompt and resend `/status`           |
 | `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                           |
 | `gemini-auth-wait`                   | Gemini is waiting for auth/trust flow                            | Do not spend `/model` fallback during auth wait                                     |
 | `gemini-slash-buffer-waiting`        | `/model` is still in the input buffer                            | Check confirmation Enter and settle timing                                          |
@@ -110,6 +110,7 @@ Codex:
 - `left` values must be converted to used percent.
 - `100% context left` is not a usage row.
 - `Limits: refresh requested; run /status again shortly.` should trigger same-session `/status` retries.
+- If raw output shows `status/status` or repeated `/status` text in the prompt, the retry was appended to stale input instead of being submitted cleanly.
 
 Gemini:
 

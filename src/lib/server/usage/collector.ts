@@ -29,6 +29,7 @@ const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 3000;
 const MAX_CODEX_STATUS_REFRESH_RETRIES = 4;
 const CODEX_SLASH_CONFIRM_INTERVAL_MS = 2000;
 const CODEX_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
+const TERMINAL_INPUT_CLEAR = '\u001b\u0015';
 const CLAUDE_TRUST_PROMPT_SETTLE_MS = 1200;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
@@ -283,7 +284,10 @@ async function runPtySlashCommand(
 			writeSlashCommandNow();
 		};
 
-		const writeSlashCommandNow = () => {
+		const writeSlashCommandNow = (options: { clearInput?: boolean } = {}) => {
+			if (options.clearInput) {
+				safeWrite(TERMINAL_INPUT_CLEAR, 'Failed to clear slash command input.');
+			}
 			safeWrite(`${slashCommand}\r`, 'Failed to write slash command.');
 			if (providerId === 'codex') {
 				const startedAt = performance.now();
@@ -356,7 +360,7 @@ async function runPtySlashCommand(
 				codexStatusRefreshRetryTimer = undefined;
 				if (settled || hasUsageOutput(providerId, output)) return;
 				codexStatusRefreshRetryCount += 1;
-				writeSlashCommandNow();
+				writeSlashCommandNow({ clearInput: true });
 			}, CODEX_STATUS_REFRESH_RETRY_DELAY_MS);
 		};
 
@@ -372,7 +376,7 @@ async function runPtySlashCommand(
 				if (!shouldReissueSlashCommand(providerId, output, slashCommand)) return;
 
 				slashReissueCount += 1;
-				writeSlashCommandNow();
+				writeSlashCommandNow({ clearInput: providerId === 'codex' });
 			}, SLASH_REISSUE_DELAY_MS);
 		};
 
@@ -527,7 +531,11 @@ function hasVisibleSlashBuffer(value: string, slashCommand: string) {
 
 function hasCodexStatusRefreshRequested(output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
-	return tail.split('\n').some((line) => isCodexStatusRefreshRequestedLine(line));
+	const lines = tail
+		.split('\n')
+		.map((line) => normalizeCollectorMarkerLine(line))
+		.filter(Boolean);
+	return latestCodexStatusSignal(lines) === 'status-refresh-requested';
 }
 
 function isCodexStatusRefreshRequestedLine(line: string) {
@@ -535,6 +543,25 @@ function isCodexStatusRefreshRequestedLine(line: string) {
 		/Limits:\s*refresh requested;\s*run \/status again shortly/i.test(line) ||
 		/limits\s+may\s+be\s+stale\s*-\s*run\s+\/status\s+again\s+shortly/i.test(line)
 	);
+}
+
+function isCodexLimitLine(line: string) {
+	return (
+		/(?:^|[│\s])5h\s+limit\s*:/i.test(line) || /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line)
+	);
+}
+
+function latestCodexStatusSignal(lines: string[]) {
+	let latest: 'usage-limit' | 'status-refresh-requested' | null = null;
+	for (const line of lines) {
+		if (isCodexStatusRefreshRequestedLine(line)) {
+			latest = 'status-refresh-requested';
+		}
+		if (isCodexLimitLine(line)) {
+			latest = 'usage-limit';
+		}
+	}
+	return latest;
 }
 
 function hasCodexUpdatePrompt(output: string) {
@@ -824,7 +851,7 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 			normalizedLines.some((line) => /(?:^|[│\s])(weekly|week)\s+limit\s*:/i.test(line))
 				? 'week-limit'
 				: null,
-			normalizedLines.some((line) => isCodexStatusRefreshRequestedLine(line))
+			latestCodexStatusSignal(normalizedLines) === 'status-refresh-requested'
 				? 'status-refresh-requested'
 				: null
 		].filter((marker): marker is string => marker !== null);

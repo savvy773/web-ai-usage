@@ -247,7 +247,7 @@ All runtime files are git-ignored.
 | `data/logs/collector.log`              | Collector diagnostics                       |
 | `data/logs/server.log`                 | Server log                                  |
 
-Codex `codex-loading` captures with no usage markers are treated as startup misses while retries continue. They are still visible in `{provider}-latest.*`, but they do not produce normal recovery noise unless the final attempt fails.
+Codex `codex-loading` captures with no usage markers are treated as startup misses while retries continue. If Codex asks for a `/status` refresh, the collector clears the prompt before resending `/status` in the same session. These captures are still visible in `{provider}-latest.*`, but they do not produce normal recovery noise unless the final attempt fails.
 
 <br />
 
