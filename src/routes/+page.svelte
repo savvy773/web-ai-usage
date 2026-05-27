@@ -17,45 +17,18 @@
 		message: string;
 		timestamp: string;
 	}
-	import type {
-		ProviderId,
-		ProviderUsage,
-		UsagePayload,
-		UsageWindow,
-		UsageWindowId
-	} from '$lib/usage';
+	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
 	import type { PageData } from './$types';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
 	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 	const USAGE_CACHE_KEY = 'ai-usage-payload-cache';
-	const CHECKLIST_STORAGE_KEY = 'ai-usage-checklist-state';
 	const USAGE_REQUEST_TIMEOUT_MS = 10_000;
 	const USAGE_REQUEST_RETRIES = 2;
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 24;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
-	const PROVIDER_CHECKS: Record<ProviderId, string[]> = {
-		claude: [
-			'Latest parsed JSON is ok or previous values are shown',
-			'Raw output includes Current session and Current week',
-			'Working directory is trusted for Claude',
-			'Last failure is older than the latest success'
-		],
-		codex: [
-			'Latest parsed JSON is ok or previous values are shown',
-			'Raw output includes 5h limit and Weekly limit',
-			'Left percent is converted to used percent',
-			'Update prompt did not intercept /status'
-		],
-		gemini: [
-			'Latest parsed JSON is ok or previous values are shown',
-			'Raw output includes Model usage',
-			'At least three model rows are parsed',
-			'Auth or trust prompt is not blocking /model'
-		]
-	};
 	const DAY_MS = 24 * 60 * 60 * 1000;
 	const MIN_WEEKLY_PACE_TARGET = 20;
 	const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en', {
@@ -94,8 +67,7 @@
 	let logContainer = $state<HTMLElement | null>(null);
 	let autoScrollLogs = $state(true);
 	let logsCopied = $state(false);
-	let activeCheckProvider = $state<ProviderId>('claude');
-	let checklistState = $state<Record<string, boolean>>({});
+	let logTab = $state<'logs' | 'checks'>('logs');
 
 	$effect(() => {
 		if (logs.length > 0 && logContainer && autoScrollLogs && showLogs) {
@@ -126,7 +98,6 @@
 
 	onMount(() => {
 		restoreRefreshCooldown();
-		restoreChecklistState();
 		const pageWasReloaded = isPageReload();
 		const cachedPayload = readCachedPayload();
 		if (payload) {
@@ -274,42 +245,6 @@
 		}
 	}
 
-	function restoreChecklistState() {
-		try {
-			const stored = localStorage.getItem(CHECKLIST_STORAGE_KEY);
-			checklistState = stored ? (JSON.parse(stored) as Record<string, boolean>) : {};
-		} catch {
-			localStorage.removeItem(CHECKLIST_STORAGE_KEY);
-			checklistState = {};
-		}
-	}
-
-	function setChecklistItem(providerId: ProviderId, item: string, checked: boolean) {
-		checklistState = {
-			...checklistState,
-			[checklistKey(providerId, item)]: checked
-		};
-		try {
-			localStorage.setItem(CHECKLIST_STORAGE_KEY, JSON.stringify(checklistState));
-		} catch {
-			// Local storage can be unavailable in private or restricted contexts.
-		}
-	}
-
-	function checklistKey(providerId: ProviderId, item: string) {
-		return `${providerId}:${item}`;
-	}
-
-	function checklistDone(providerId: ProviderId, item: string) {
-		return checklistState[checklistKey(providerId, item)] === true;
-	}
-
-	function checklistProgress(providerId: ProviderId) {
-		const items = PROVIDER_CHECKS[providerId];
-		const checked = items.filter((item) => checklistDone(providerId, item)).length;
-		return `${checked}/${items.length}`;
-	}
-
 	function shouldRefreshOnMount(nextPayload: UsagePayload | null) {
 		if (!nextPayload) return true;
 		if (!latestCollectedAt(nextPayload)) return true;
@@ -376,10 +311,15 @@
 		});
 	}
 
-	async function copyLogs() {
-		const text = logs
-			.map((entry) => `${formatLogTime(entry.timestamp)} [${entry.level}] ${entry.message}`)
-			.join('\n');
+	async function copyActivePanel() {
+		const text =
+			logTab === 'checks'
+				? checkItems()
+						.map((item) => `${item.provider} [${item.tone}] ${item.message}`)
+						.join('\n')
+				: logs
+						.map((entry) => `${formatLogTime(entry.timestamp)} [${entry.level}] ${entry.message}`)
+						.join('\n');
 		await navigator.clipboard.writeText(text);
 		logsCopied = true;
 		window.setTimeout(() => {
@@ -473,14 +413,13 @@
 
 		const days = Number(match[1] ?? 0);
 		const hours = Number(match[2] ?? 0);
-		const minutes = Number(match[3] ?? 0);
 		const parts = [
 			{ value: match[1] ?? '0', unit: 'd', tone: 'text-violet-400', visible: days > 0 },
 			{
 				value: match[2] ?? '0',
 				unit: 'h',
 				tone: 'text-cyan-400',
-				visible: days > 0 || hours > 0 || minutes === 0
+				visible: hours > 0
 			},
 			{ value: match[3] ?? '0', unit: 'm', tone: 'text-amber-300', visible: true }
 		];
@@ -491,15 +430,15 @@
 	function countdownText(window: UsageWindow) {
 		if (window.resetAt) {
 			const diff = Date.parse(window.resetAt) - now.getTime();
-			if (diff <= 0) return '0h 0m';
+			if (diff <= 0) return '0m';
 
 			const minutes = Math.floor(diff / 60_000);
 			const days = Math.floor(minutes / 1440);
 			const hours = Math.floor((minutes % 1440) / 60);
 			const remainingMinutes = minutes % 60;
-			return days > 0
-				? `${days}d ${hours}h ${remainingMinutes}m`
-				: `${hours}h ${remainingMinutes}m`;
+			if (days > 0) return `${days}d ${hours}h ${remainingMinutes}m`;
+			if (hours > 0) return `${hours}h ${remainingMinutes}m`;
+			return `${remainingMinutes}m`;
 		}
 
 		return window.remainingText ?? 'Unknown';
@@ -639,6 +578,52 @@
 
 	function providerFootnote(provider: ProviderUsage) {
 		return needsProviderCheck(provider) ? null : provider.message;
+	}
+
+	function checkItems() {
+		const items = providers.flatMap((provider) => {
+			if (needsProviderCheck(provider)) {
+				return [
+					{
+						provider: provider.name,
+						tone: 'warn',
+						message: provider.message.replace(/^Previous data kept;\s*/i, '')
+					}
+				];
+			}
+
+			if (provider.status !== 'ok') {
+				return [
+					{
+						provider: provider.name,
+						tone: provider.status === 'partial' ? 'warn' : 'error',
+						message: provider.message
+					}
+				];
+			}
+
+			return [];
+		});
+
+		if (payload?.refreshState?.error) {
+			items.push({
+				provider: 'Refresh',
+				tone: 'error',
+				message: payload.refreshState.error
+			});
+		}
+
+		return items;
+	}
+
+	function checkToneClass(tone: string) {
+		if (tone === 'error') return 'text-rose-300';
+		if (tone === 'warn') return 'text-amber-300';
+		return 'text-muted-foreground';
+	}
+
+	function activePanelHasContent() {
+		return logTab === 'checks' ? checkItems().length > 0 : logs.length > 0;
 	}
 
 	function openUsageUrl(url: string) {
@@ -1019,66 +1004,41 @@
 		{/if}
 	</section>
 
-	{#if providers.length > 0}
-		<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
-			<div class="rounded-md border bg-card">
-				<div class="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
-					<div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-						<AlertTriangle class="size-3.5" />
-						<span>Checks</span>
-					</div>
-					<div class="flex flex-wrap items-center gap-1">
-						{#each providers as provider (provider.provider)}
-							<button
-								type="button"
-								class={`h-7 cursor-pointer rounded-md border px-2 text-xs font-medium transition-colors ${
-									activeCheckProvider === provider.provider
-										? 'border-cyan-300/30 bg-cyan-500/10 text-cyan-200'
-										: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground'
-								}`}
-								onclick={() => (activeCheckProvider = provider.provider)}
-							>
-								{provider.name}
-								<span class="ml-1 font-mono text-[10px] tabular-nums"
-									>{checklistProgress(provider.provider)}</span
-								>
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<div class="grid gap-2 p-3 sm:grid-cols-2">
-					{#each PROVIDER_CHECKS[activeCheckProvider] as item (item)}
-						<label
-							class="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs text-foreground/80 transition-colors hover:border-cyan-300/25 hover:bg-cyan-500/5"
-						>
-							<input
-								type="checkbox"
-								class="size-3.5 accent-cyan-400"
-								checked={checklistDone(activeCheckProvider, item)}
-								onchange={(event) =>
-									setChecklistItem(
-										activeCheckProvider,
-										item,
-										(event.currentTarget as HTMLInputElement).checked
-									)}
-							/>
-							<span>{item}</span>
-						</label>
-					{/each}
-				</div>
-			</div>
-		</section>
-	{/if}
-
 	{#if showLogs}
 		<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
 			<div class="overflow-hidden rounded-md border bg-card">
 				<div class="flex items-center justify-between gap-3 border-b px-3 py-2">
-					<div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-						<ScrollText class="size-3.5" />
-						<span>Server Logs</span>
-						<span class="rounded bg-muted px-1.5 py-0.5 font-mono tabular-nums">{logs.length}</span>
+					<div class="flex items-center gap-1">
+						<button
+							type="button"
+							class={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors ${
+								logTab === 'logs'
+									? 'border-cyan-300/30 bg-cyan-500/10 text-cyan-200'
+									: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground'
+							}`}
+							onclick={() => (logTab = 'logs')}
+						>
+							<ScrollText class="size-3.5" />
+							Logs
+							<span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
+								>{logs.length}</span
+							>
+						</button>
+						<button
+							type="button"
+							class={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors ${
+								logTab === 'checks'
+									? 'border-amber-300/30 bg-amber-500/10 text-amber-200'
+									: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground'
+							}`}
+							onclick={() => (logTab = 'checks')}
+						>
+							<AlertTriangle class="size-3.5" />
+							Checks
+							<span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
+								>{checkItems().length}</span
+							>
+						</button>
 					</div>
 					<div class="flex items-center gap-1.5">
 						<label
@@ -1095,9 +1055,9 @@
 						<button
 							type="button"
 							class="flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:shadow-none"
-							disabled={logs.length === 0}
-							title="Copy logs"
-							onclick={() => void copyLogs()}
+							disabled={!activePanelHasContent()}
+							title={logTab === 'checks' ? 'Copy checks' : 'Copy logs'}
+							onclick={() => void copyActivePanel()}
 						>
 							<Copy class="size-3" />
 							{logsCopied ? 'Copied' : 'Copy'}
@@ -1117,7 +1077,19 @@
 					bind:this={logContainer}
 					class="log-scroll h-72 overflow-y-auto bg-background p-3 font-mono text-[10px] leading-4"
 				>
-					{#if logs.length === 0}
+					{#if logTab === 'checks'}
+						{@const checks = checkItems()}
+						{#if checks.length === 0}
+							<span class="text-muted-foreground/50">No checks needed</span>
+						{:else}
+							{#each checks as item (`${item.provider}-${item.message}`)}
+								<div class="flex gap-2 leading-5">
+									<span class={`w-24 shrink-0 ${checkToneClass(item.tone)}`}>{item.provider}</span>
+									<span class={checkToneClass(item.tone)}>{item.message}</span>
+								</div>
+							{/each}
+						{/if}
+					{:else if logs.length === 0}
 						<span class="text-muted-foreground/50">No logs yet</span>
 					{:else}
 						{#each logs as entry (entry.timestamp + entry.message)}
