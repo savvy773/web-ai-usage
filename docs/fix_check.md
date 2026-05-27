@@ -71,7 +71,7 @@ For follow-up monitoring, check only lines after the latest successful `generate
 Escalate to collector/runtime investigation when new lines repeat:
 
 - `node-pty path failed; trying pipe fallback`
-- `markers=none`
+- repeated `markers=none` entries after the final attempt
 - `claude-trust-prompt` or `codex-update-prompt`
 - startup/redraw phases such as `claude-startup-or-redraw`, `codex-startup-or-redraw`, or `gemini-startup-or-redraw`
 - final-attempt `partial` warnings for all providers in the same refresh bucket
@@ -82,17 +82,17 @@ Escalate to parser investigation only when the raw or latest parsed snapshot cle
 
 ## Phase Meanings
 
-| Phase                                | Meaning                                            | Next check                                          |
-| ------------------------------------ | -------------------------------------------------- | --------------------------------------------------- |
-| `usage-output-complete`              | Parser found enough usage data                     | Check `usage-latest.json` and UI rendering          |
-| `codex-loading`                      | Codex is still starting                            | Wait for readiness; do not send `/status` too early |
-| `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly             | Same-session `/status` retry should happen          |
-| `codex-status-output-without-limits` | Codex answered, but limit rows are missing         | Inspect raw text for changed output shape           |
-| `gemini-auth-wait`                   | Gemini is waiting for auth/trust flow              | Do not spend `/model` fallback during auth wait     |
-| `gemini-slash-buffer-waiting`        | `/model` is still in the input buffer              | Check confirmation Enter and settle timing          |
-| `gemini-ready-without-model-screen`  | Gemini prompt returned, but no model panel opened  | Check slash reissue guard                           |
-| `gemini-model-screen-incomplete`     | Model panel opened, but rows/resets are incomplete | Check `\r` handling and panel boundary parsing      |
-| startup/redraw with `markers=none`   | Raw has boot/progress output only                  | Treat as collector readiness/timing first           |
+| Phase                                | Meaning                                                          | Next check                                                                          |
+| ------------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `usage-output-complete`              | Parser found enough usage data                                   | Check `usage-latest.json` and UI rendering                                          |
+| `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial |
+| `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should happen                                          |
+| `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                           |
+| `gemini-auth-wait`                   | Gemini is waiting for auth/trust flow                            | Do not spend `/model` fallback during auth wait                                     |
+| `gemini-slash-buffer-waiting`        | `/model` is still in the input buffer                            | Check confirmation Enter and settle timing                                          |
+| `gemini-ready-without-model-screen`  | Gemini prompt returned, but no model panel opened                | Check slash reissue guard                                                           |
+| `gemini-model-screen-incomplete`     | Model panel opened, but rows/resets are incomplete               | Check `\r` handling and panel boundary parsing                                      |
+| startup/redraw with `markers=none`   | Raw has boot/progress output only                                | Treat as collector readiness/timing first                                           |
 
 ## Provider Checks
 

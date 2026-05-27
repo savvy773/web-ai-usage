@@ -20,6 +20,8 @@ const FINAL_RETRY_DELAY_MS = 10_000;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
 const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 3000;
 const MAX_CODEX_STATUS_REFRESH_RETRIES = 4;
+const CODEX_SLASH_CONFIRM_INTERVAL_MS = 2000;
+const CODEX_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
 const CODEX_UPDATE_SKIP_OPTION = '2';
@@ -85,7 +87,9 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 			phase: diagnostics.phase,
 			markers: diagnostics.markers,
 			parseDiagnostics: diagnostics.parseDetails,
-			writeFailureCopy: latestResult.status !== 'ok' && !transientStartupMiss
+			writeFailureCopy:
+				latestResult.status !== 'ok' &&
+				(!transientStartupMiss || attempt === MAX_COLLECTION_ATTEMPTS)
 		}).catch(() => undefined);
 
 		if (latestResult.status === 'ok') {
@@ -268,11 +272,24 @@ async function runPtySlashCommand(
 		const writeSlashCommandNow = () => {
 			safeWrite(`${slashCommand}\r`, 'Failed to write slash command.');
 			if (providerId === 'codex') {
-				schedule(() => {
-					if (shouldConfirmCodexSlashCommand(output, slashCommand)) {
+				const startedAt = performance.now();
+				const confirmUntilMs = Math.max(
+					10_000,
+					captureTimeoutMs(providerId, attempt) - CODEX_SLASH_CONFIRM_TIMEOUT_BUFFER_MS
+				);
+
+				const confirmSlashCommand = () => {
+					if (settled || hasUsageOutput(providerId, output)) return;
+					const shouldConfirm = shouldConfirmCodexSlashCommand(output, slashCommand);
+					if (shouldConfirm) {
 						safeWrite('\r', 'Failed to confirm slash command.');
 					}
-				}, 400);
+					if (performance.now() - startedAt < confirmUntilMs && shouldConfirm) {
+						schedule(confirmSlashCommand, CODEX_SLASH_CONFIRM_INTERVAL_MS);
+					}
+				};
+
+				schedule(confirmSlashCommand, 800);
 			}
 			if (providerId === 'gemini') {
 				const startedAt = performance.now();
@@ -841,13 +858,8 @@ function isTransientStartupMiss(
 	if (providerId !== 'codex') return false;
 	if (diagnostics.result.status === 'ok') return false;
 	if (diagnostics.markers.length > 0) return false;
-	if (diagnostics.rawOutputLength < 10_000) return false;
-	if (diagnostics.lines.length > 2) return false;
-	if (/\/status|5h\s+limit|weekly\s+limit|gpt-[^\r\n]+ · [A-Z]:\\/i.test(diagnostics.output)) {
-		return false;
-	}
 
-	return true;
+	return diagnostics.phase === 'codex-loading' || diagnostics.phase === 'codex-startup-or-redraw';
 }
 
 function shouldAdvanceWorkingDirectory(

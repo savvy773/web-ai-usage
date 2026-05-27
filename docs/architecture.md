@@ -93,7 +93,7 @@ Key timings:
 | manual refresh cooldown | `10s`                                                                    |
 | frontend polling        | until refresh finishes or polling attempts expire                        |
 
-Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
+Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. Codex may show a ready prompt while MCP startup is still redrawing, so `/status` confirmation is repeated while the slash command remains in the input buffer. If Codex still returns `codex-loading` with no usage markers, the attempt is treated as a startup miss instead of a reportable recovery. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
 
 ## Provider Parsing
 

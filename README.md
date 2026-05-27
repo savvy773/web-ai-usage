@@ -69,7 +69,7 @@ flowchart LR
 |     | Feature              | Description                                                                                 |
 | :-: | :------------------- | :------------------------------------------------------------------------------------------ |
 | ⚡  | **Multi-provider**   | Runs Claude `/usage` · Codex `/status` · Gemini `/model` in virtual terminals               |
-|  ↻  | **Smart retry**      | Up to 5 attempts with phase diagnostics and automatic slash-command recovery                |
+|  ↻  | **Smart retry**      | Up to 5 attempts with phase diagnostics and repeated slash-command confirmation             |
 | 📊  | **Weekly Pace card** | Usage bar vs. 20 % minimum threshold — see if you're on track                               |
 |  ⏱  | **Reset countdown**  | Live per-provider countdown to next usage reset                                             |
 | 📡  | **Live server logs** | SSE stream rendered directly in the browser — no polling                                    |
@@ -233,6 +233,8 @@ All runtime files are git-ignored.
 | `data/raw/{provider}-last-failure.txt` | Last failed capture                         |
 | `data/logs/collector.log`              | Collector diagnostics                       |
 | `data/logs/server.log`                 | Server log                                  |
+
+Codex `codex-loading` captures with no usage markers are treated as startup misses while retries continue. They are still visible in `{provider}-latest.*`, but they do not produce normal recovery noise unless the final attempt fails.
 
 <br />
 
