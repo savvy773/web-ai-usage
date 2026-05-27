@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
 import {
 	BAR_DECORATION_PATTERN,
 	BOX_DECORATION_PATTERN,
@@ -6,7 +7,13 @@ import {
 	stripTerminalOutput
 } from './parser';
 import { writeCollectorDebugSnapshot } from './debug-files';
-import { CLI_COLLECTION_CONFIG, PROVIDERS, type ProviderId, type ProviderUsage } from '$lib/usage';
+import {
+	CLI_COLLECTION_CONFIG,
+	PROVIDERS,
+	providerWorkingDirectories,
+	type ProviderId,
+	type ProviderUsage
+} from '$lib/usage';
 
 type PtyModule = typeof import('node-pty');
 
@@ -22,6 +29,7 @@ const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 3000;
 const MAX_CODEX_STATUS_REFRESH_RETRIES = 4;
 const CODEX_SLASH_CONFIRM_INTERVAL_MS = 2000;
 const CODEX_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
+const CLAUDE_TRUST_PROMPT_SETTLE_MS = 1200;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
 const CODEX_UPDATE_SKIP_OPTION = '2';
@@ -49,7 +57,7 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 	let hadReportableFailure = false;
 	let transientStartupMisses = 0;
 	let workingDirectoryIndex = 0;
-	const workingDirectories = CLI_COLLECTION_CONFIG.workingDirectories;
+	const workingDirectories = providerWorkingDirectories(provider.id);
 
 	for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
 		let output = '';
@@ -157,6 +165,7 @@ async function runSlashCommand(
 	attempt: number,
 	workingDirectory: string
 ) {
+	await ensureWorkingDirectory(workingDirectory);
 	try {
 		return await runPtySlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
 	} catch (error) {
@@ -166,6 +175,10 @@ async function runSlashCommand(
 		);
 		return await runPipeSlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
 	}
+}
+
+async function ensureWorkingDirectory(workingDirectory: string) {
+	await mkdir(workingDirectory, { recursive: true });
 }
 
 async function runPtySlashCommand(
@@ -189,6 +202,7 @@ async function runPtySlashCommand(
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
 		let slashReissueTimer: NodeJS.Timeout | undefined;
+		let claudeTrustPromptTimer: NodeJS.Timeout | undefined;
 		const timers = new Set<NodeJS.Timeout>();
 
 		const schedule = (callback: () => void, ms: number) => {
@@ -371,6 +385,9 @@ async function runPtySlashCommand(
 					() => safeWrite(`${CODEX_UPDATE_SKIP_OPTION}\r`, 'Failed to skip Codex update prompt.'),
 					250
 				);
+			}
+			if (providerId === 'claude' && hasClaudeTrustPrompt(output)) {
+				claudeTrustPromptTimer ??= schedule(() => finish(output), CLAUDE_TRUST_PROMPT_SETTLE_MS);
 			}
 
 			if (!wroteCommand && isShellReady(output)) {
@@ -869,10 +886,7 @@ function shouldAdvanceWorkingDirectory(
 	if (diagnostics.result.status === 'ok') return false;
 
 	if (providerId === 'claude') {
-		return (
-			diagnostics.phase === 'claude-trust-prompt' ||
-			diagnostics.phase === 'claude-ready-without-usage-output'
-		);
+		return diagnostics.phase === 'claude-trust-prompt';
 	}
 
 	if (providerId === 'codex') {

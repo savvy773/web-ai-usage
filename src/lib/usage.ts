@@ -12,11 +12,53 @@ function runtimeWorkingDirectory() {
 	}
 }
 
+function defaultTempWorkingDirectories() {
+	return [envValue('TEMP'), envValue('TMP')].filter((value): value is string => Boolean(value));
+}
+
+function parentWorkingDirectory(value: string) {
+	const normalized = value.replace(/[\\/]+$/, '');
+	const index = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
+	return index > 0 ? normalized.slice(0, index) : '';
+}
+
+function baseWorkingDirectoryName(value: string) {
+	const normalized = value.replace(/[\\/]+$/, '');
+	const index = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
+	return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+function workspaceTempWorkingDirectory() {
+	const projectRoot = runtimeWorkingDirectory();
+	const parent = parentWorkingDirectory(projectRoot);
+	const grandparent = parentWorkingDirectory(parent);
+	if (baseWorkingDirectoryName(parent).toLowerCase() !== '_toolkit') return '';
+	return grandparent ? `${grandparent}\\_temp` : '';
+}
+
+function isAbsoluteWorkingDirectory(value: string) {
+	return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value) || value.startsWith('/');
+}
+
+function resolveWorkingDirectory(value: string) {
+	if (!value) return value;
+	if (isAbsoluteWorkingDirectory(value)) return value;
+	return `${runtimeWorkingDirectory()}\\${value.replace(/^[\\/]+/, '')}`;
+}
+
+function expandWorkingDirectory(value: string) {
+	return value
+		.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, name: string) => envValue(name) ?? '')
+		.replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, name: string) => envValue(name) ?? '')
+		.trim();
+}
+
 function splitWorkingDirectories(value: string | undefined) {
 	if (!value) return [];
 	return value
 		.split(';')
-		.map((item) => item.trim().replace(/^["']|["']$/g, ''))
+		.map((item) => expandWorkingDirectory(item.trim().replace(/^["']|["']$/g, '')))
+		.map(resolveWorkingDirectory)
 		.filter(Boolean);
 }
 
@@ -30,16 +72,36 @@ function uniqueWorkingDirectories(values: string[]) {
 	});
 }
 
-export const CLI_WORKING_DIRECTORIES = uniqueWorkingDirectories([
-	...splitWorkingDirectories(envValue('AI_USAGE_CWD')),
-	...splitWorkingDirectories(envValue('AI_USAGE_CWD_CANDIDATES')),
-	envValue('USERPROFILE') ?? envValue('HOME') ?? '',
-	runtimeWorkingDirectory()
-]).filter(Boolean);
+function configuredWorkingDirectories() {
+	return uniqueWorkingDirectories([
+		...splitWorkingDirectories(envValue('AI_USAGE_CWD')),
+		...splitWorkingDirectories(envValue('AI_USAGE_CWD_CANDIDATES'))
+	]).filter(Boolean);
+}
+
+function defaultWorkingDirectories() {
+	return uniqueWorkingDirectories([
+		workspaceTempWorkingDirectory(),
+		...defaultTempWorkingDirectories()
+	]).filter(Boolean);
+}
+
+function limitWorkingDirectories(values: string[]) {
+	return values.slice(0, 3);
+}
+
+const CONFIGURED_WORKING_DIRECTORIES = configuredWorkingDirectories();
+
+export const CLI_WORKING_DIRECTORIES = (
+	CONFIGURED_WORKING_DIRECTORIES.length > 0
+		? CONFIGURED_WORKING_DIRECTORIES
+		: defaultWorkingDirectories()
+).filter(Boolean);
 
 export const CLI_COLLECTION_CONFIG = {
 	workingDirectory: CLI_WORKING_DIRECTORIES[0] ?? '.',
-	workingDirectories: CLI_WORKING_DIRECTORIES.length > 0 ? CLI_WORKING_DIRECTORIES : ['.'],
+	workingDirectories:
+		CLI_WORKING_DIRECTORIES.length > 0 ? CLI_WORKING_DIRECTORIES : [runtimeWorkingDirectory()],
 	shellCommandDelayMs: 500,
 	commandDelayMs: 6000,
 	captureTimeoutMs: 45_000,
@@ -87,6 +149,20 @@ export const PROVIDERS = [
 ] as const;
 
 export type ProviderId = (typeof PROVIDERS)[number]['id'];
+
+export function providerWorkingDirectories(providerId: ProviderId) {
+	const suffix = providerId.toUpperCase();
+	const providerDirectories = uniqueWorkingDirectories([
+		...splitWorkingDirectories(envValue(`AI_USAGE_CWD_${suffix}`)),
+		...splitWorkingDirectories(envValue(`AI_USAGE_CWD_CANDIDATES_${suffix}`)),
+		...CLI_COLLECTION_CONFIG.workingDirectories
+	]).filter(Boolean);
+
+	return limitWorkingDirectories(
+		providerDirectories.length > 0 ? providerDirectories : CLI_COLLECTION_CONFIG.workingDirectories
+	);
+}
+
 export type UsageStatus = 'ok' | 'partial' | 'unavailable';
 export type UsageWindowId = 'fiveHour' | 'week';
 

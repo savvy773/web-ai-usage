@@ -96,8 +96,8 @@ npm install -g @google/gemini-cli          # Gemini CLI
 Run each CLI **once** in the directory you plan to use as your working directory, complete the full auth flow, then exit:
 
 ```powershell
-# Default working directory is %USERPROFILE%
-cd $env:USERPROFILE
+# Default working directory under a _toolkit\aI_usage install is ..\..\_temp.
+cd ..\..\_temp
 
 claude               # → complete browser OAuth → type /exit
 codex                # → complete setup wizard → exit
@@ -172,21 +172,34 @@ Then re-run `pnpm install`.
 <details>
 <summary>Custom CLI working directory</summary>
 
-The collector tries CLI working directories in this order:
+The normal setup is two shared candidates in `.env`:
+
+```text
+AI_USAGE_CWD=D:\Code\_temp
+AI_USAGE_CWD_CANDIDATES=%TEMP%
+```
+
+When `AI_USAGE_CWD` or `AI_USAGE_CWD_CANDIDATES` is set, the collector uses only those shared candidates, up to three paths total:
 
 1. `AI_USAGE_CWD`
 2. `AI_USAGE_CWD_CANDIDATES`, split by semicolon
-3. `%USERPROFILE%`
-4. the dashboard install path
 
-To change the preferred path or add fallbacks, copy `.env.example` → `.env` and set:
+If both are unset, the built-in fallback order is:
+
+1. `..\..\_temp` when installed under `_toolkit\aI_usage`
+2. `%TEMP%`
+3. `%TMP%`
+
+To change the preferred path or add fallbacks for multiple PCs, edit `.env`:
 
 ```text
-AI_USAGE_CWD=D:\your\path
-AI_USAGE_CWD_CANDIDATES=D:\Code\_temp;C:\Users\yourname;D:\Code\_toolkit\aI_usage
+AI_USAGE_CWD=..\..\_temp
+AI_USAGE_CWD_CANDIDATES=%TEMP%
 ```
 
-Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`.
+Relative paths such as `..\..\_temp` are resolved from the dashboard project root, so the same config works across PCs after `irm` installation. Keep this directory outside the Git repo to avoid repo-root trust prompts. `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime. The collector creates the working directory if it is missing, but it does not intentionally create persistent files inside it; if a CLI creates temporary files, it owns their cleanup. Each CLI uses at most three candidates. Shared settings are enough for normal use. To customize an unusual provider-specific setup, set `AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI`, or their `AI_USAGE_CWD_CANDIDATES_*` variants. Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`. Claude retries incomplete `/usage` loading in the same working directory; it only advances to the next candidate when a trust prompt blocks collection.
+
+Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` under `[projects.'path']` entries with `trust_level = "trusted"`.
 
 </details>
 

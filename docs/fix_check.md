@@ -85,6 +85,8 @@ Escalate to parser investigation only when the raw or latest parsed snapshot cle
 | Phase                                | Meaning                                                          | Next check                                                                          |
 | ------------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `usage-output-complete`              | Parser found enough usage data                                   | Check `usage-latest.json` and UI rendering                                          |
+| `claude-ready-without-usage-output`  | Claude opened, but `/usage` has not produced complete rows yet   | Retry same working directory; do not switch unless a trust prompt appears           |
+| `claude-trust-prompt`                | Claude is blocked by workspace trust                             | Next retry should move to another trusted candidate quickly                         |
 | `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial |
 | `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should happen                                          |
 | `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                           |
