@@ -264,5 +264,5 @@ Codex `codex-loading` captures with no usage markers are treated as startup miss
 ---
 
 <div align="center">
-  <sub>MIT License · Local. Private. Yours.</sub>
+  <sub>© 2026 savvy773 · MIT License · Local. Private. Yours.</sub>
 </div>
