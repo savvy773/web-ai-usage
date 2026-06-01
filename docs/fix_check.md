@@ -63,6 +63,7 @@ After a successful live refresh, do not treat older `partial` lines as current f
 - `collector.log` timestamps are UTC.
 - The local dashboard clock is usually KST.
 - A later `usage-output-complete` snapshot supersedes an older `partial` attempt for the same provider.
+- During refresh, providers are collected independently and each completed provider snapshot is recorded before the slowest provider finishes.
 - If served JSON says `Previous data kept`, inspect the raw snapshot for the latest failure, but the browser should still show the previous usable values.
 - If the latest `data\usage-latest.json` has all providers `ok`, watch the next scheduled refresh before changing code.
 
@@ -82,19 +83,19 @@ Escalate to parser investigation only when the raw or latest parsed snapshot cle
 
 ## Phase Meanings
 
-| Phase                                | Meaning                                                          | Next check                                                                          |
-| ------------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `usage-output-complete`              | Parser found enough usage data                                   | Check `usage-latest.json` and UI rendering                                          |
-| `claude-ready-without-usage-output`  | Claude opened, but `/usage` has not produced complete rows yet   | Retry same working directory; do not switch unless a trust prompt appears           |
-| `claude-trust-prompt`                | Claude is blocked by workspace trust                             | Next retry should move to another trusted candidate quickly                         |
-| `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial |
-| `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should clear the prompt and resend `/status`           |
-| `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                           |
-| `gemini-auth-wait`                   | Gemini is waiting for auth/trust flow                            | Do not spend `/model` fallback during auth wait                                     |
-| `gemini-slash-buffer-waiting`        | `/model` is still in the input buffer                            | Check confirmation Enter and settle timing                                          |
-| `gemini-ready-without-model-screen`  | Gemini prompt returned, but no model panel opened                | Check slash reissue guard                                                           |
-| `gemini-model-screen-incomplete`     | Model panel opened, but rows/resets are incomplete               | Check `\r` handling and panel boundary parsing                                      |
-| startup/redraw with `markers=none`   | Raw has boot/progress output only                                | Treat as collector readiness/timing first                                           |
+| Phase                                | Meaning                                                          | Next check                                                                               |
+| ------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `usage-output-complete`              | Parser found enough usage data                                   | Check `usage-latest.json` and UI rendering                                               |
+| `claude-ready-without-usage-output`  | Claude opened, but `/usage` has not produced complete rows yet   | Retry same working directory; do not switch unless a trust prompt appears                |
+| `claude-trust-prompt`                | Claude is blocked by workspace trust                             | Next retry should move to another trusted candidate quickly                              |
+| `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial      |
+| `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should clear the prompt, wait briefly, and resend `/status` |
+| `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                                |
+| `gemini-auth-wait`                   | Gemini is waiting for auth/trust flow                            | Do not spend `/model` fallback during auth wait                                          |
+| `gemini-slash-buffer-waiting`        | `/model` is still in the input buffer                            | Check confirmation Enter and settle timing                                               |
+| `gemini-ready-without-model-screen`  | Gemini prompt returned, but no model panel opened                | Check slash reissue guard                                                                |
+| `gemini-model-screen-incomplete`     | Model panel opened, but rows/resets are incomplete               | Check `\r` handling and panel boundary parsing                                           |
+| startup/redraw with `markers=none`   | Raw has boot/progress output only                                | Treat as collector readiness/timing first                                                |
 
 ## Provider Checks
 
@@ -110,7 +111,7 @@ Codex:
 - `left` values must be converted to used percent.
 - `100% context left` is not a usage row.
 - `Limits: refresh requested; run /status again shortly.` should trigger same-session `/status` retries.
-- If raw output shows `status/status` or repeated `/status` text in the prompt, the retry was appended to stale input instead of being submitted cleanly.
+- If raw output shows `u/status`, or repeated `/status` prompt text without `5h limit` / `Weekly limit` rows, the retry was appended to stale input instead of being submitted cleanly. Codex can render `›/statusgpt-...` without a newline; the collector should still treat that as a visible slash buffer. `/statusline` completion text is harmless when the phase is `usage-output-complete`.
 
 Gemini:
 
