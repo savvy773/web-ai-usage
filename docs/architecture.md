@@ -1,7 +1,7 @@
 # AI Usage Dashboard Architecture
 
-Project root: `D:\Code\_toolkit\aI_usage`  
-Local URL: `http://127.0.0.1:5173/`  
+Project root: `D:\Code\_toolkit\aI_usage`
+Local URL: `http://127.0.0.1:5173/`
 Server script: `scripts\start-server.ps1`
 
 This document is the short implementation reference. Use `fix_check.md` when a refresh or parser issue needs step-by-step diagnosis.
