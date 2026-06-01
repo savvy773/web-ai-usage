@@ -140,6 +140,11 @@ function parseWindow(
 	providerId: ProviderId
 ): UsageWindow {
 	const window = createEmptyWindow(windowId);
+	if (providerId === 'claude') {
+		const claudeWindow = parseClaudeWindow(lines, windowId);
+		if (hasWindowUsage(claudeWindow)) return claudeWindow;
+	}
+
 	const limitLine = findCodexLimitLine(lines, windowId);
 	if (limitLine) {
 		applyCodexLimitLine(window, limitLine);
@@ -184,6 +189,73 @@ function parseWindow(
 	}
 
 	return window;
+}
+
+function parseClaudeWindow(lines: string[], windowId: 'fiveHour' | 'week'): UsageWindow {
+	const window = createEmptyWindow(windowId);
+	const section = extractClaudeUsageSection(lines, windowId);
+	if (!section) return window;
+
+	const percent = parseUsagePercent(section);
+	if (percent !== null) {
+		window.percent = percent;
+	}
+
+	const ratio = parseRatio(section);
+	if (ratio) {
+		window.used = ratio.used;
+		window.limit = ratio.limit;
+		window.percent ??=
+			ratio.limit > 0 ? Math.min(100, Math.round((ratio.used / ratio.limit) * 1000) / 10) : null;
+	}
+
+	const remaining = parseRemainingText(section);
+	if (remaining) {
+		window.remainingText = remaining;
+	}
+
+	const resetAt = parseResetAt(section);
+	if (resetAt) {
+		window.resetAt = resetAt;
+	}
+
+	return window;
+}
+
+function hasWindowUsage(window: UsageWindow) {
+	return (
+		window.percent !== null ||
+		window.used !== null ||
+		window.limit !== null ||
+		window.resetAt !== null ||
+		window.remainingText !== null
+	);
+}
+
+function extractClaudeUsageSection(lines: string[], windowId: 'fiveHour' | 'week') {
+	const text = lines.join('\n');
+	const targetPattern =
+		windowId === 'fiveHour'
+			? /current\s+session\b/gi
+			: /current\s+week(?:\s+\(all\s+models\))?\b/gi;
+	const otherPattern =
+		windowId === 'fiveHour'
+			? /current\s+week(?:\s+\(all\s+models\))?\b/gi
+			: /\bwhat's\s+contributing\b|\bscanning\s+local\s+sessions\b|\blast\s+24h\b/gi;
+	const start = findLastMatch(text, targetPattern);
+	if (!start) return null;
+
+	const afterTarget = text.slice(start.index);
+	const endMatch = otherPattern.exec(afterTarget.slice(start.text.length));
+	const end = endMatch ? start.text.length + endMatch.index : afterTarget.length;
+	return normalizeClaudeUsageSection(afterTarget.slice(0, end));
+}
+
+function normalizeClaudeUsageSection(section: string) {
+	return section
+		.replace(/\b(used|left|remaining|available)\s*(?=rese\s*(?:ts?|s)\b)/gi, '$1 ')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 function findCodexLimitLine(lines: string[], windowId: 'fiveHour' | 'week') {
@@ -253,6 +325,16 @@ function findLastMatchingIndex(lines: string[], pattern: RegExp) {
 	}
 
 	return -1;
+}
+
+function findLastMatch(value: string, pattern: RegExp) {
+	let latest: { index: number; text: string } | null = null;
+	for (const match of value.matchAll(pattern)) {
+		if (match.index !== undefined) {
+			latest = { index: match.index, text: match[0] };
+		}
+	}
+	return latest;
 }
 
 function mergeGeminiModelUsages(usages: ModelUsage[]) {
