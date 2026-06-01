@@ -38,6 +38,7 @@ $DataDir = Join-Path $ProjectRoot 'data'
 $LogsDir = Join-Path $DataDir 'logs'
 $ProcessLogPath = Join-Path $LogsDir 'server-process.log'
 $StartupErrorLogPath = Join-Path $LogsDir 'server-startup-error.log'
+$ServerReadyTimeoutSeconds = 150
 
 Set-Location $ProjectRoot
 
@@ -289,6 +290,29 @@ function Remove-ServerState {
 	}
 }
 
+function Wait-DashboardHttpReady {
+	param(
+		[Parameter(Mandatory)]
+		[string]$Url,
+
+		[int]$TimeoutSeconds = 150
+	)
+
+	$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+	while ((Get-Date) -lt $deadline) {
+		try {
+			$response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+			if ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 500) {
+				return $true
+			}
+		} catch {
+			Start-Sleep -Seconds 1
+		}
+	}
+
+	return $false
+}
+
 function Start-DashboardServer {
 	$PnpmCommand = Get-PnpmCommand
 	$NodeCommand = Get-NodeCommand
@@ -317,14 +341,18 @@ function Start-DashboardServer {
 		$ViteArgs = @($ViteBin, 'dev', '--host', $HostName, '--port', "$Port", '--strictPort')
 	}
 
-	if ($Open) {
-		$ViteArgs += '--open'
-	}
-
 	New-Item -ItemType Directory -Force $LogsDir | Out-Null
 
 	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ProcessLogPath -RedirectStandardError $StartupErrorLogPath -PassThru
 	Write-ServerState -Process $serverProcess
+	if ($Open) {
+		$url = "http://$HostName`:$Port/"
+		if (Wait-DashboardHttpReady -Url $url -TimeoutSeconds $ServerReadyTimeoutSeconds) {
+			Start-Process $url
+		} else {
+			Write-Warning "Server did not answer within $ServerReadyTimeoutSeconds seconds. Open manually: $url"
+		}
+	}
 	return 0
 }
 
