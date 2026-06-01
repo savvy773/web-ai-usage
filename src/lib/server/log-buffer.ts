@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { LOG_DIR } from '$lib/server/file-paths';
 
@@ -42,6 +42,15 @@ export function getBuffer(): LogEntry[] {
 	return [...buffer];
 }
 
+export async function getInitialBuffer(): Promise<LogEntry[]> {
+	const entries = [...buffer];
+	const startupError = await readStartupErrorLog();
+	if (startupError && !entries.some((entry) => entry.message === startupError.message)) {
+		entries.push(startupError);
+	}
+	return entries.slice(-MAX_ENTRIES);
+}
+
 export function clearBuffer() {
 	buffer.length = 0;
 }
@@ -80,4 +89,39 @@ function appendManagedLog(fileName: string, line: string) {
 
 function formatLogEntry(entry: LogEntry) {
 	return `[${entry.timestamp}] [${entry.level}] ${entry.message}\n`;
+}
+
+async function readStartupErrorLog(): Promise<LogEntry | null> {
+	const filePath = path.join(LOG_DIR, 'server-startup-error.log');
+	try {
+		const [content, stats] = await Promise.all([readFile(filePath, 'utf8'), stat(filePath)]);
+		const message = visibleStartupStderr(content);
+		if (!message) return null;
+		return {
+			level: 'warn',
+			message: `[startup-stderr] ${message}`,
+			timestamp: stats.mtime.toISOString()
+		};
+	} catch {
+		return null;
+	}
+}
+
+function visibleStartupStderr(content: string) {
+	const lines = content
+		.split(/\r?\n/)
+		.map((line) => line.trimEnd())
+		.filter((line) => line.trim());
+	const visibleLines = lines.filter((line) => !isIgnoredStartupStderrLine(line));
+	return visibleLines.join('\n').trim();
+}
+
+function isIgnoredStartupStderrLine(line: string) {
+	return (
+		/\[DEP0205\]\s+DeprecationWarning:\s+`module\.register\(\)` is deprecated/i.test(line) ||
+		/^Trace:.*\[DEP0205\]/i.test(line) ||
+		/^\(?Use `node --trace-deprecation \.\.\.` to show where the warning was created\)?$/i.test(
+			line
+		)
+	);
 }
