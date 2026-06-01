@@ -28,6 +28,7 @@
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 24;
+	const STARTUP_AUTO_REFRESH_GRACE_MS = 120_000;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 	const DAY_MS = 24 * 60 * 60 * 1000;
 	const MIN_WEEKLY_PACE_TARGET = 20;
@@ -108,17 +109,9 @@
 			loading = false;
 		}
 		if (!payload) {
-			void loadUsage({ refreshAfterLoad: true, forceRefreshAfterLoad: pageWasReloaded });
-		} else if (pageWasReloaded && !initialRefreshStarted) {
-			initialRefreshStarted = true;
-			window.setTimeout(() => void refreshUsage('manual', { force: true }), 250);
-		} else if (
-			!initialRefreshStarted &&
-			!isRefreshCoolingDown(refreshCooldownUntil) &&
-			shouldRefreshOnMount(payload)
-		) {
-			initialRefreshStarted = true;
-			window.setTimeout(() => void refreshUsage('auto'), 250);
+			void loadUsage({ refreshAfterLoad: true });
+		} else if (!isRefreshCoolingDown(refreshCooldownUntil) && shouldRefreshOnMount(payload)) {
+			scheduleStartupRefresh(pageWasReloaded ? 'manual' : 'auto');
 		}
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
@@ -152,11 +145,7 @@
 				if (!options.forceRefreshAfterLoad && isRefreshCoolingDown(refreshCooldownUntil)) {
 					return;
 				}
-				initialRefreshStarted = true;
-				window.setTimeout(
-					() => void refreshUsage('auto', { force: options.forceRefreshAfterLoad }),
-					250
-				);
+				scheduleStartupRefresh('auto', { force: options.forceRefreshAfterLoad });
 			}
 		} catch (requestError) {
 			const cachedPayload = readCachedPayload();
@@ -226,6 +215,16 @@
 		cachePayload(nextPayload);
 	}
 
+	function scheduleStartupRefresh(
+		mode: 'manual' | 'auto' = 'auto',
+		options: { force?: boolean } = {}
+	) {
+		if (initialRefreshStarted) return;
+		initialRefreshStarted = true;
+		const delayMs = hasUsablePayload(payload) ? STARTUP_AUTO_REFRESH_GRACE_MS : 250;
+		window.setTimeout(() => void refreshUsage(mode, options), delayMs);
+	}
+
 	function cachePayload(nextPayload: UsagePayload) {
 		try {
 			localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(nextPayload));
@@ -251,6 +250,20 @@
 
 		const nextRefreshAt = Date.parse(nextPayload.nextRefreshAt);
 		return Number.isFinite(nextRefreshAt) && nextRefreshAt <= Date.now();
+	}
+
+	function hasUsablePayload(nextPayload: UsagePayload | null) {
+		return nextPayload?.providers.some(hasUsableProvider) ?? false;
+	}
+
+	function hasUsableProvider(provider: ProviderUsage) {
+		return (
+			provider.modelUsages.length > 0 ||
+			provider.windows.fiveHour.percent !== null ||
+			provider.windows.week.percent !== null ||
+			provider.windows.fiveHour.used !== null ||
+			provider.windows.week.used !== null
+		);
 	}
 
 	async function fetchUsagePayload(url: string) {
@@ -558,7 +571,7 @@
 
 	function statusTone(provider: ProviderUsage) {
 		if (needsProviderCheck(provider)) {
-			return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
+			return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700';
 		}
 		if (provider.status === 'ok') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
 		if (provider.status === 'partial') return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
@@ -566,7 +579,7 @@
 	}
 
 	function statusLabel(provider: ProviderUsage) {
-		if (needsProviderCheck(provider)) return 'Needs check';
+		if (needsProviderCheck(provider)) return 'Cached';
 		if (provider.status === 'ok') return 'Live';
 		if (provider.status === 'partial') return 'Partial';
 		return 'Unavailable';
