@@ -25,11 +25,12 @@ const STANDARD_RETRY_DELAY_MS = 1500;
 const PATIENT_RETRY_DELAY_MS = 5000;
 const FINAL_RETRY_DELAY_MS = 10_000;
 const DEBUG_COLLECTOR_LOGS = process.env.AI_USAGE_DEBUG_LOGS === '1';
-const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 3000;
-const MAX_CODEX_STATUS_REFRESH_RETRIES = 4;
+const CODEX_STATUS_REFRESH_RETRY_DELAY_MS = 6000;
+const MAX_CODEX_STATUS_REFRESH_RETRIES = 2;
 const CODEX_SLASH_CONFIRM_INTERVAL_MS = 2000;
 const CODEX_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
-const TERMINAL_INPUT_CLEAR = '\u001b\u0015';
+const TERMINAL_INPUT_CLEAR = '\u0001\u000b';
+const TERMINAL_INPUT_CLEAR_SETTLE_MS = 80;
 const CLAUDE_TRUST_PROMPT_SETTLE_MS = 1200;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
@@ -39,12 +40,16 @@ const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z
 const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
 const GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
 
-export async function collectAllUsage(): Promise<ProviderUsage[]> {
-	const results: ProviderUsage[] = [];
-	for (const provider of PROVIDERS) {
-		results.push(await collectProvider(provider.id));
-	}
-	return results;
+export async function collectAllUsage(
+	onProviderResult?: (provider: ProviderUsage) => void | Promise<void>
+): Promise<ProviderUsage[]> {
+	return await Promise.all(
+		PROVIDERS.map(async (provider) => {
+			const result = await collectProvider(provider.id);
+			await onProviderResult?.(result);
+			return result;
+		})
+	);
 }
 
 async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
@@ -215,6 +220,13 @@ async function runPtySlashCommand(
 			return timer;
 		};
 
+		const cancelTimer = (timer: NodeJS.Timeout | undefined) => {
+			if (!timer) return undefined;
+			clearTimeout(timer);
+			timers.delete(timer);
+			return undefined;
+		};
+
 		const terminal = pty.spawn(
 			CLI_COLLECTION_CONFIG.shell.command,
 			[...CLI_COLLECTION_CONFIG.shell.args],
@@ -281,14 +293,21 @@ async function runPtySlashCommand(
 		const writeSlashCommand = () => {
 			if (wroteSlashCommand) return;
 			wroteSlashCommand = true;
-			writeSlashCommandNow();
+			writeSlashCommandNow({ clearInput: providerId === 'codex' });
 		};
 
 		const writeSlashCommandNow = (options: { clearInput?: boolean } = {}) => {
+			const writeSlashCommandInput = () => {
+				safeWrite(`${slashCommand}\r`, 'Failed to write slash command.');
+			};
+
 			if (options.clearInput) {
 				safeWrite(TERMINAL_INPUT_CLEAR, 'Failed to clear slash command input.');
+				schedule(writeSlashCommandInput, TERMINAL_INPUT_CLEAR_SETTLE_MS);
+			} else {
+				writeSlashCommandInput();
 			}
-			safeWrite(`${slashCommand}\r`, 'Failed to write slash command.');
+
 			if (providerId === 'codex') {
 				const startedAt = performance.now();
 				const confirmUntilMs = Math.max(
@@ -359,6 +378,7 @@ async function runPtySlashCommand(
 			codexStatusRefreshRetryTimer = schedule(() => {
 				codexStatusRefreshRetryTimer = undefined;
 				if (settled || hasUsageOutput(providerId, output)) return;
+				if (!hasCodexStatusRefreshRequested(output)) return;
 				codexStatusRefreshRetryCount += 1;
 				writeSlashCommandNow({ clearInput: true });
 			}, CODEX_STATUS_REFRESH_RETRY_DELAY_MS);
@@ -403,6 +423,8 @@ async function runPtySlashCommand(
 			}
 
 			if (wroteSlashCommand && hasUsageOutput(providerId, output)) {
+				codexStatusRefreshRetryTimer = cancelTimer(codexStatusRefreshRetryTimer);
+				slashReissueTimer = cancelTimer(slashReissueTimer);
 				if (usageSettleTimer) {
 					clearTimeout(usageSettleTimer);
 					timers.delete(usageSettleTimer);
@@ -453,7 +475,7 @@ function shouldConfirmGeminiSlashCommand(output: string, slashCommand: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
 	if (hasGeminiModelScreenText(tail)) return false;
 
-	return new RegExp(`(?:^|\\n)[^\\n]*>\\s*${escapeRegExp(slashCommand)}\\b`, 'i').test(tail);
+	return hasVisibleSlashBuffer(tail, slashCommand);
 }
 
 function hasGeminiModelScreen(output: string) {
@@ -526,7 +548,12 @@ function shouldReissueSlashCommand(providerId: ProviderId, output: string, slash
 }
 
 function hasVisibleSlashBuffer(value: string, slashCommand: string) {
-	return new RegExp(`(?:^|\\n)[^\\n]*>\\s*${escapeRegExp(slashCommand)}\\b`, 'i').test(value);
+	const escapedSlashCommand = escapeRegExp(slashCommand);
+	const commandEndPattern = String.raw`(?=\s|$|gpt-|gemini-|Auto\s|[A-Z]:\\)`;
+	return new RegExp(
+		`(?:^|\\n)[^\\n]*>\\s*${escapedSlashCommand}${commandEndPattern}|\\u203a\\s*${escapedSlashCommand}${commandEndPattern}`,
+		'i'
+	).test(value);
 }
 
 function hasCodexStatusRefreshRequested(output: string) {
