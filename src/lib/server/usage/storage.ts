@@ -312,14 +312,9 @@ function toStoredWindow(window: ProviderUsage['windows']['fiveHour']): StoredUsa
 
 function buildPayload(history: UsageBucket[]): UsagePayload {
 	const generatedAt = new Date();
-	const latestProviders = PROVIDERS.map((provider) => {
-		for (let index = history.length - 1; index >= 0; index -= 1) {
-			const bucket = history[index];
-			const usage = bucket.providers[provider.id];
-			if (usage) return usage;
-		}
-		return createUnavailableUsage(provider);
-	});
+	const latestProviders = PROVIDERS.map((provider) =>
+		restoreLatestProviderFromHistory(provider.id, history)
+	);
 
 	const latestCollectedAt = history
 		.map((bucket) => Date.parse(bucket.collectedAt))
@@ -332,5 +327,38 @@ function buildPayload(history: UsageBucket[]): UsagePayload {
 		nextRefreshAt: new Date(refreshBaseMs + BUCKET_MS).toISOString(),
 		providers: latestProviders,
 		history
+	};
+}
+
+function restoreLatestProviderFromHistory(
+	providerId: ProviderId,
+	history: UsageBucket[]
+): ProviderUsage {
+	let latest: ProviderUsage | null = null;
+	for (let index = history.length - 1; index >= 0; index -= 1) {
+		const usage = history[index].providers[providerId];
+		if (usage) {
+			latest = usage;
+			break;
+		}
+	}
+
+	if (!latest) {
+		const provider = PROVIDERS.find((item) => item.id === providerId);
+		if (!provider) throw new Error(`Unknown provider: ${providerId}`);
+		return createUnavailableUsage(provider);
+	}
+
+	if (isUsableProvider(latest)) return latest;
+
+	const previous = findLatestUsableProvider(history, providerId);
+	if (!previous) return latest;
+
+	return {
+		...previous,
+		status: 'ok' as const,
+		message: `Previous data kept; latest stored ${latest.status}: ${latest.message}`,
+		collectionDurationMs: latest.collectionDurationMs,
+		rawPreview: latest.rawPreview
 	};
 }
