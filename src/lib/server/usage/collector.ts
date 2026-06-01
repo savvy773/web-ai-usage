@@ -35,6 +35,7 @@ const CLAUDE_TRUST_PROMPT_SETTLE_MS = 1200;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
 const CODEX_UPDATE_SKIP_OPTION = '2';
+const TERMINAL_GRACEFUL_CLOSE_MS = 5000;
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
 const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
@@ -204,6 +205,8 @@ async function runPtySlashCommand(
 		let codexStatusRefreshRetryCount = 0;
 		let slashReissueCount = 0;
 		let codexUpdatePromptSkipped = false;
+		let terminalExited = false;
+		let terminalClosing = false;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
@@ -218,6 +221,13 @@ async function runPtySlashCommand(
 			}, ms);
 			timers.add(timer);
 			return timer;
+		};
+
+		const clearScheduledTimers = () => {
+			for (const timer of timers) {
+				clearTimeout(timer);
+			}
+			timers.clear();
 		};
 
 		const cancelTimer = (timer: NodeJS.Timeout | undefined) => {
@@ -236,15 +246,13 @@ async function runPtySlashCommand(
 				rows: 36,
 				cwd: workingDirectory,
 				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
-				useConptyDll: true
+				useConptyDll: process.env.AI_USAGE_USE_CONPTY_DLL === '1'
 			}
 		);
 
-		const cleanup = () => {
-			for (const timer of timers) {
-				clearTimeout(timer);
-			}
-			timers.clear();
+		const cleanup = (options: { killTerminal?: boolean } = {}) => {
+			clearScheduledTimers();
+			if (options.killTerminal === false || terminalExited) return;
 			try {
 				terminal.kill();
 			} catch {
@@ -252,10 +260,10 @@ async function runPtySlashCommand(
 			}
 		};
 
-		const finish = (value: string) => {
+		const finish = (value: string, options: { killTerminal?: boolean } = {}) => {
 			if (settled) return;
 			settled = true;
-			cleanup();
+			cleanup(options);
 			resolve(value);
 		};
 
@@ -264,6 +272,26 @@ async function runPtySlashCommand(
 			settled = true;
 			cleanup();
 			reject(new Error(message));
+		};
+
+		const bestEffortWrite = (value: string) => {
+			if (settled || terminalExited) return;
+			try {
+				terminal.write(value);
+			} catch {
+				// The PTY may already be closing.
+			}
+		};
+
+		const finishAfterTerminalClose = (value: string) => {
+			if (settled) return;
+			if (terminalClosing) return;
+			terminalClosing = true;
+			clearScheduledTimers();
+			bestEffortWrite('\u0003');
+			schedule(() => bestEffortWrite('exit\r'), 250);
+			schedule(() => bestEffortWrite('exit\r'), 1000);
+			schedule(() => finish(value), TERMINAL_GRACEFUL_CLOSE_MS);
 		};
 
 		const safeWrite = (value: string, failureMessage: string) => {
@@ -411,7 +439,10 @@ async function runPtySlashCommand(
 				);
 			}
 			if (providerId === 'claude' && hasClaudeTrustPrompt(output)) {
-				claudeTrustPromptTimer ??= schedule(() => finish(output), CLAUDE_TRUST_PROMPT_SETTLE_MS);
+				claudeTrustPromptTimer ??= schedule(
+					() => finishAfterTerminalClose(output),
+					CLAUDE_TRUST_PROMPT_SETTLE_MS
+				);
 			}
 
 			if (!wroteCommand && isShellReady(output)) {
@@ -429,14 +460,20 @@ async function runPtySlashCommand(
 					clearTimeout(usageSettleTimer);
 					timers.delete(usageSettleTimer);
 				}
-				usageSettleTimer = schedule(() => finish(output), usageOutputSettleMs(providerId));
+				usageSettleTimer = schedule(
+					() => finishAfterTerminalClose(output),
+					usageOutputSettleMs(providerId)
+				);
 			}
 
 			retryCodexStatusAfterRefresh();
 			reissueSlashCommandIfLost();
 		});
 
-		terminal.onExit(() => finish(output));
+		terminal.onExit(() => {
+			terminalExited = true;
+			finish(output, { killTerminal: false });
+		});
 
 		writeCommandWhenShellReady();
 		schedule(
@@ -444,7 +481,7 @@ async function runPtySlashCommand(
 			CLI_COLLECTION_CONFIG.shellCommandDelayMs + slashDelayMs(providerId)
 		);
 
-		schedule(() => finish(output), captureTimeoutMs(providerId, attempt));
+		schedule(() => finishAfterTerminalClose(output), captureTimeoutMs(providerId, attempt));
 	});
 }
 
