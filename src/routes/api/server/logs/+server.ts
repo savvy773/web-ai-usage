@@ -1,4 +1,4 @@
-import { clearBuffer, getBuffer, subscribe } from '$lib/server/log-buffer';
+import { clearBuffer, getInitialBuffer, subscribe } from '$lib/server/log-buffer';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = () => {
@@ -15,8 +15,15 @@ export const GET: RequestHandler = () => {
 				}
 			};
 
-			send({ type: 'init', entries: getBuffer() });
-			unsubscribe = subscribe((entry) => send({ type: 'entry', entry }));
+			getInitialBuffer()
+				.then((entries) => {
+					send({ type: 'init', entries });
+					unsubscribe = subscribe((entry) => send({ type: 'entry', entry }));
+				})
+				.catch(() => {
+					send({ type: 'init', entries: [] });
+					unsubscribe = subscribe((entry) => send({ type: 'entry', entry }));
+				});
 		},
 		cancel() {
 			unsubscribe?.();
