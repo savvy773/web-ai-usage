@@ -72,6 +72,7 @@ For follow-up monitoring, check only lines after the latest successful `generate
 Escalate to collector/runtime investigation when new lines repeat:
 
 - `node-pty path failed; trying pipe fallback`
+- a Microsoft Visual C++ Runtime assertion dialog mentioning `node-pty` or `conpty.node`
 - repeated `markers=none` entries after the final attempt
 - `claude-trust-prompt` or `codex-update-prompt`
 - startup/redraw phases such as `claude-startup-or-redraw`, `codex-startup-or-redraw`, or `gemini-startup-or-redraw`
@@ -79,7 +80,9 @@ Escalate to collector/runtime investigation when new lines repeat:
 
 Escalate to parser investigation only when the raw or latest parsed snapshot clearly contains usage rows but the parsed provider result is still `partial`.
 
-`DEP0205` / `module.register()` warnings are non-blocking Vite/SvelteKit/Node deprecation warnings unless they are paired with request failures or server startup errors. Track them as dependency maintenance, not as usage parsing failures.
+`DEP0205` / `module.register()` warnings are non-blocking Vite/SvelteKit/Node deprecation warnings unless they are paired with request failures or server startup errors. They are filtered from the dashboard log; track them as dependency maintenance, not as usage parsing failures.
+
+Windows `node-pty` assertion dialogs are native process failures, so the browser cannot catch the dialog after it is created. The collector keeps the bundled ConPTY DLL disabled by default; only set `AI_USAGE_USE_CONPTY_DLL=1` temporarily when investigating PTY behavior.
 
 ## Phase Meanings
 
@@ -122,15 +125,16 @@ Gemini:
 
 ## Common Symptoms
 
-| Symptom                                           | Likely cause                                       | Fix direction                                    |
-| ------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| `Cross-site POST form submissions are forbidden`  | Missing JSON body or Origin header                 | Send `{}` with `Origin: http://127.0.0.1:5173`   |
-| Source changes seem ignored                       | Preview server was not restarted                   | Run `.\scripts\start-server.ps1` again           |
-| All providers become partial in one bucket        | CLI startup/auth timing or `node-pty` path issue   | Inspect latest and last-failure raw snapshots    |
-| Latest UI still shows usable values after partial | Storage carried forward previous usable snapshot   | Check provider status/message for latest failure |
-| Gemini has status rows but no models              | `/model` panel was not opened or not settled       | Check slash buffer, auth wait, and reissue guard |
-| Codex shows `Unknown` or `100%`                   | Parser read a status line instead of limit rows    | Narrow Codex parser to limit rows                |
-| `collector.log` looks quiet during success        | Successful raw snapshots are the stronger evidence | Check `data\raw\*-latest.parsed.json`            |
+| Symptom                                            | Likely cause                                       | Fix direction                                        |
+| -------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------- |
+| `Cross-site POST form submissions are forbidden`   | Missing JSON body or Origin header                 | Send `{}` with `Origin: http://127.0.0.1:5173`       |
+| Source changes seem ignored                        | Preview server was not restarted                   | Run `.\scripts\start-server.ps1` again               |
+| All providers become partial in one bucket         | CLI startup/auth timing or `node-pty` path issue   | Inspect latest and last-failure raw snapshots        |
+| Latest UI still shows usable values after partial  | Storage carried forward previous usable snapshot   | Check provider status/message for latest failure     |
+| Gemini has status rows but no models               | `/model` panel was not opened or not settled       | Check slash buffer, auth wait, and reissue guard     |
+| Codex shows `Unknown` or `100%`                    | Parser read a status line instead of limit rows    | Narrow Codex parser to limit rows                    |
+| Visual C++ assertion dialog mentions `conpty.node` | Bundled ConPTY DLL or PTY cleanup path crashed     | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server |
+| `collector.log` looks quiet during success         | Successful raw snapshots are the stronger evidence | Check `data\raw\*-latest.parsed.json`                |
 
 ## When To Change Code
 
