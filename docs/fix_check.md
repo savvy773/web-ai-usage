@@ -65,6 +65,7 @@ After a successful live refresh, do not treat older `partial` lines as current f
 - A later `usage-output-complete` snapshot supersedes an older `partial` attempt for the same provider.
 - During refresh, providers are collected independently and each completed provider snapshot is recorded before the slowest provider finishes.
 - If served JSON says `Previous data kept`, inspect the raw snapshot for the latest failure, but the browser should still show the previous usable values.
+- On a cold PC boot, the browser may open before the preview server and CLIs are fully warm. The page should keep the cached/previous usable values, show `Cached` instead of `Unavailable`, and delay its startup auto-refresh briefly before trying the CLIs.
 - If the latest `data\usage-latest.json` has all providers `ok`, watch the next scheduled refresh before changing code.
 
 For follow-up monitoring, check only lines after the latest successful `generatedAt` time unless the user is asking about an older incident.
@@ -125,22 +126,24 @@ Gemini:
 
 ## Common Symptoms
 
-| Symptom                                            | Likely cause                                       | Fix direction                                        |
-| -------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------- |
-| `Cross-site POST form submissions are forbidden`   | Missing JSON body or Origin header                 | Send `{}` with `Origin: http://127.0.0.1:5173`       |
-| Source changes seem ignored                        | Preview server was not restarted                   | Run `.\scripts\start-server.ps1` again               |
-| All providers become partial in one bucket         | CLI startup/auth timing or `node-pty` path issue   | Inspect latest and last-failure raw snapshots        |
-| Latest UI still shows usable values after partial  | Storage carried forward previous usable snapshot   | Check provider status/message for latest failure     |
-| Gemini has status rows but no models               | `/model` panel was not opened or not settled       | Check slash buffer, auth wait, and reissue guard     |
-| Codex shows `Unknown` or `100%`                    | Parser read a status line instead of limit rows    | Narrow Codex parser to limit rows                    |
-| Visual C++ assertion dialog mentions `conpty.node` | Bundled ConPTY DLL or PTY cleanup path crashed     | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server |
-| `collector.log` looks quiet during success         | Successful raw snapshots are the stronger evidence | Check `data\raw\*-latest.parsed.json`                |
+| Symptom                                            | Likely cause                                        | Fix direction                                               |
+| -------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------- |
+| `Cross-site POST form submissions are forbidden`   | Missing JSON body or Origin header                  | Send `{}` with `Origin: http://127.0.0.1:5173`              |
+| Source changes seem ignored                        | Preview server was not restarted                    | Run `.\scripts\start-server.ps1` again                      |
+| All providers become partial in one bucket         | CLI startup/auth timing or `node-pty` path issue    | Inspect latest and last-failure raw snapshots               |
+| Latest UI still shows usable values after partial  | Storage carried forward previous usable snapshot    | Check provider status/message for latest failure            |
+| Cold boot shows Claude `Unavailable` / `Unknown`   | Startup refresh ran before Claude accepted `/usage` | Keep previous usable history and delay startup auto-refresh |
+| Gemini has status rows but no models               | `/model` panel was not opened or not settled        | Check slash buffer, auth wait, and reissue guard            |
+| Codex shows `Unknown` or `100%`                    | Parser read a status line instead of limit rows     | Narrow Codex parser to limit rows                           |
+| Visual C++ assertion dialog mentions `conpty.node` | Bundled ConPTY DLL or PTY cleanup path crashed      | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server        |
+| `collector.log` looks quiet during success         | Successful raw snapshots are the stronger evidence  | Check `data\raw\*-latest.parsed.json`                       |
 
 ## When To Change Code
 
 Change collector timing/readiness when:
 
 - raw output lacks usage rows;
+- raw shows `/usage` at a PowerShell prompt before the Claude command is ready;
 - `phase` shows auth wait, loading, slash buffer, refresh pending, or ready-without-screen;
 - retries expire before the provider reaches the usage screen.
 
