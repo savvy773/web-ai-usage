@@ -379,6 +379,10 @@ async function runPtySlashCommand(
 
 		const writeSlashCommandFallback = () => {
 			if (wroteSlashCommand) return;
+			if (!wroteCommand) {
+				schedule(writeSlashCommandFallback, 1000);
+				return;
+			}
 			if (providerId === 'codex' && shouldWaitForCodexReady(output)) {
 				schedule(writeSlashCommandFallback, 1000);
 				return;
