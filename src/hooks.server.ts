@@ -16,6 +16,7 @@ function captureConsole(level: LogEntry['level'], original: (...args: unknown[])
 
 type G = typeof globalThis & {
 	__aiConsoleCaptured?: boolean;
+	__aiProcessEventsCaptured?: boolean;
 	__aiServerStartedLogged?: boolean;
 };
 
@@ -27,6 +28,25 @@ if (!g.__aiConsoleCaptured) {
 	console.warn = captureConsole('warn', console.warn.bind(console));
 	console.error = captureConsole('error', console.error.bind(console));
 	console.info = captureConsole('info', console.info.bind(console));
+}
+
+function formatProcessError(value: unknown) {
+	if (value instanceof Error) return value.stack ?? value.message;
+	if (typeof value === 'string') return value;
+	return JSON.stringify(value);
+}
+
+if (!g.__aiProcessEventsCaptured) {
+	g.__aiProcessEventsCaptured = true;
+	process.on('warning', (warning) => {
+		pushLog('warn', `[process] ${warning.stack ?? `${warning.name}: ${warning.message}`}`);
+	});
+	process.on('unhandledRejection', (reason) => {
+		pushLog('error', `[process] Unhandled rejection: ${formatProcessError(reason)}`);
+	});
+	process.on('uncaughtExceptionMonitor', (error) => {
+		pushLog('error', `[process] Uncaught exception: ${formatProcessError(error)}`);
+	});
 }
 
 if (!g.__aiServerStartedLogged) {
