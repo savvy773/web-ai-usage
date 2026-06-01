@@ -49,27 +49,41 @@ function startRefresh() {
 		error: null
 	};
 
-	activeRefresh = collectAllUsage()
+	let snapshotWrite = Promise.resolve<UsagePayload | null>(null);
+	const recordProviderResult = (provider: Awaited<ReturnType<typeof collectAllUsage>>[number]) => {
+		snapshotWrite = snapshotWrite
+			.catch(() => null)
+			.then(() => recordUsageSnapshot([provider]))
+			.catch((error) => {
+				const msg = error instanceof Error ? error.message : 'Failed to record provider snapshot.';
+				console.error('[refresh] Provider snapshot error:', msg);
+				return null;
+			});
+	};
+
+	activeRefresh = collectAllUsage(recordProviderResult)
 		.then((providers) => {
 			const statuses = providers.map((p) => `${p.provider}:${p.status}`).join(' ');
-			return recordUsageSnapshot(providers).then((payload) => {
-				refreshState = {
-					refreshing: false,
-					startedAt: refreshState.startedAt,
-					finishedAt: new Date().toISOString(),
-					error: null
-				};
-				if (statuses !== lastStatuses) {
-					const hasError = providers.some((p) => p.status !== 'ok');
-					if (hasError) {
-						console.warn(`[refresh] ${statuses}`);
-					} else if (lastStatuses !== null) {
-						console.info(`[refresh] recovered: ${statuses}`);
+			return snapshotWrite
+				.then(() => recordUsageSnapshot(providers))
+				.then((payload) => {
+					refreshState = {
+						refreshing: false,
+						startedAt: refreshState.startedAt,
+						finishedAt: new Date().toISOString(),
+						error: null
+					};
+					if (statuses !== lastStatuses) {
+						const hasError = providers.some((p) => p.status !== 'ok');
+						if (hasError) {
+							console.warn(`[refresh] ${statuses}`);
+						} else if (lastStatuses !== null) {
+							console.info(`[refresh] recovered: ${statuses}`);
+						}
+						lastStatuses = statuses;
 					}
-					lastStatuses = statuses;
-				}
-				return payload;
-			});
+					return payload;
+				});
 		})
 		.catch(async (error) => {
 			const msg = error instanceof Error ? error.message : 'Failed to refresh usage data.';
