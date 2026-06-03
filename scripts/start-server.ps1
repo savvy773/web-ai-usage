@@ -34,6 +34,7 @@ $ServerName = 'ai-usage-dashboard'
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $RuntimeDir = Join-Path $ProjectRoot '.server'
 $StatePath = Join-Path $RuntimeDir "$ServerName.json"
+$NodeVersionStampPath = Join-Path $RuntimeDir 'node-version.txt'
 $DataDir = Join-Path $ProjectRoot 'data'
 $LogsDir = Join-Path $DataDir 'logs'
 $ProcessLogPath = Join-Path $LogsDir 'server-process.log'
@@ -83,6 +84,33 @@ function Get-PnpmCommand {
 	}
 
 	throw 'pnpm is required to run this project.'
+}
+
+function Get-CurrentNodeVersion {
+	try {
+		$node = Get-NodeCommand
+		return (& $node --version 2>&1).Trim()
+	} catch {
+		return ''
+	}
+}
+
+function Test-NativeBuildStale {
+	if (-not (Test-Path -LiteralPath $NodeVersionStampPath)) { return $true }
+	$stamped = (Get-Content -LiteralPath $NodeVersionStampPath -Raw -ErrorAction SilentlyContinue).Trim()
+	return $stamped -ne (Get-CurrentNodeVersion)
+}
+
+function Repair-NativeModules {
+	$version = Get-CurrentNodeVersion
+	Write-Host "Node $version detected (version changed); rebuilding native modules..." -ForegroundColor Yellow
+	$pnpm = Get-PnpmCommand
+	& $pnpm rebuild 2>&1 | ForEach-Object { Write-Host $_ }
+	if ($LASTEXITCODE -ne 0) {
+		Write-Warning "Native module rebuild exited $LASTEXITCODE. The server may not work correctly."
+	}
+	New-Item -ItemType Directory -Force $RuntimeDir | Out-Null
+	$version | Set-Content -LiteralPath $NodeVersionStampPath -Encoding UTF8
 }
 
 function Get-NodeCommand {
@@ -320,6 +348,9 @@ function Start-DashboardServer {
 
 	if (-not (Test-Path 'node_modules')) {
 		& $PnpmCommand install
+		if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
+	} elseif (Test-NativeBuildStale) {
+		Repair-NativeModules
 	}
 
 	if (-not $NoRestart) {
@@ -336,6 +367,8 @@ function Start-DashboardServer {
 		if ($LASTEXITCODE -ne 0) {
 			return $LASTEXITCODE
 		}
+		New-Item -ItemType Directory -Force $RuntimeDir | Out-Null
+		(Get-CurrentNodeVersion) | Set-Content -LiteralPath $NodeVersionStampPath -Encoding UTF8
 		$ViteArgs = @($ViteBin, 'preview', '--host', $HostName, '--port', "$Port", '--strictPort')
 	} else {
 		$ViteArgs = @($ViteBin, 'dev', '--host', $HostName, '--port', "$Port", '--strictPort')
