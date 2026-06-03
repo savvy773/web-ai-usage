@@ -21,6 +21,9 @@ const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
 const MAX_COLLECTION_ATTEMPTS = 5;
 const SHELL_READY_POLL_MS = 500;
+// Safety net: if the shell prompt is never detected as ready (e.g. an unforeseen prompt
+// format change), force-write the CLI command anyway rather than wedging the whole capture.
+const SHELL_READY_FORCE_WRITE_MS = 8000;
 const STANDARD_RETRY_DELAY_MS = 1500;
 const PATIENT_RETRY_DELAY_MS = 5000;
 const FINAL_RETRY_DELAY_MS = 10_000;
@@ -309,9 +312,10 @@ async function runPtySlashCommand(
 			safeWrite(`${command}\r`, 'Failed to write CLI command.');
 		};
 
+		const shellReadyDeadline = performance.now() + SHELL_READY_FORCE_WRITE_MS;
 		const writeCommandWhenShellReady = () => {
 			if (wroteCommand) return;
-			if (!isShellReady(output)) {
+			if (!isShellReady(output) && performance.now() < shellReadyDeadline) {
 				schedule(writeCommandWhenShellReady, SHELL_READY_POLL_MS);
 				return;
 			}
@@ -490,7 +494,13 @@ async function runPtySlashCommand(
 }
 
 function isShellReady(output: string) {
-	return /PS\s+[A-Z]:\\[^>]*>\s*$/i.test(output.slice(-500));
+	// Strip terminal escapes before matching: pwsh renders the prompt followed by a
+	// cursor-move + OSC window-title + show-cursor sequence (`PS …>\x1b[1C\x1b]0;…\x07\x1b[?25h`),
+	// so the bare-text regex never sees `>` at the tail. On a cold boot the whole prompt
+	// arrives in one conpty chunk, so the lucky chunk boundary that masked this never lands
+	// and the command is never written. Stripping makes detection chunk-boundary-independent.
+	const tail = stripTerminalOutput(output.slice(-2000));
+	return /PS\s+[A-Z]:\\[^>\n]*>\s*$/i.test(tail);
 }
 
 function isCliReady(providerId: ProviderId, output: string) {
