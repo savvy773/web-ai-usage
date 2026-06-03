@@ -4,6 +4,10 @@ import type { UsagePayload, UsageRefreshState } from '$lib/usage';
 
 const PREFETCH_LEAD_MS = 30_000;
 const QUICK_REFRESH_WAIT_MS = 2_000;
+// Delay the first scheduled refresh after a cold server start so node-pty and
+// the CLI subprocesses have time to settle before PTY sessions are opened.
+const STARTUP_WARMUP_MS = 10_000;
+const serverStartedAt = Date.now();
 
 let activeRefresh: Promise<UsagePayload> | null = null;
 let scheduledPrefetch: NodeJS.Timeout | null = null;
@@ -106,13 +110,18 @@ function startRefresh() {
 	return activeRefresh;
 }
 
+function startupWarmupMs() {
+	return Math.max(0, STARTUP_WARMUP_MS - (Date.now() - serverStartedAt));
+}
+
 function schedulePrefetch(payload: UsagePayload) {
 	if (activeRefresh || scheduledPrefetch) return;
 
 	const nextRefreshAt = Date.parse(payload.nextRefreshAt);
 	if (!Number.isFinite(nextRefreshAt)) return;
 
-	const delayMs = Math.max(0, nextRefreshAt - Date.now() - PREFETCH_LEAD_MS);
+	const scheduleDelayMs = Math.max(0, nextRefreshAt - Date.now() - PREFETCH_LEAD_MS);
+	const delayMs = Math.max(scheduleDelayMs, startupWarmupMs());
 	scheduledPrefetch = setTimeout(() => {
 		scheduledPrefetch = null;
 		void startRefresh();
