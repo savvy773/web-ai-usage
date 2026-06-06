@@ -84,9 +84,9 @@ flowchart LR
 The dashboard collects data by running each CLI in a virtual terminal. **Install whichever CLIs you want to monitor:**
 
 ```powershell
-npm install -g @anthropic-ai/claude-code   # Claude
+irm https://claude.ai/install.ps1 | iex    # Claude
 npm install -g @openai/codex               # Codex
-# Antigravity CLI is installed locally using the agy package/executable.
+irm https://antigravity.google/cli/install.ps1 | iex  # Antigravity
 ```
 
 ### Step 2 — Pre-authenticate each CLI
@@ -96,12 +96,11 @@ npm install -g @openai/codex               # Codex
 Run each CLI **once** in the directory you plan to use as your working directory, complete the full auth flow, then exit:
 
 ```powershell
-# Default working directory under a _toolkit\aI_usage install is ..\..\_temp.
-cd ..\..\_temp
+cd %USERPROFILE%
 
-claude               # → complete browser OAuth → type /exit
-codex                # → complete setup wizard → exit
-agy --dangerously-skip-permissions  # → complete Google auth  → exit
+claude               # → OAuth → /exit
+codex                # → setup → exit
+agy                  # → setup → exit
 ```
 
 > If you want CLIs to run in a different directory, set `AI_USAGE_CWD` in `.env` — but you must authenticate there too. See [Custom CLI working directory](#) below.
