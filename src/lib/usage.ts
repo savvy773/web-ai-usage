@@ -141,9 +141,9 @@ export const PROVIDERS = [
 	},
 	{
 		id: 'gemini',
-		name: 'Gemini CLI',
-		command: 'gemini --skip-trust',
-		slashCommand: '/model',
+		name: 'Antigravity',
+		command: 'agy --dangerously-skip-permissions',
+		slashCommand: '/usage',
 		usageUrl: null
 	}
 ] as const;
