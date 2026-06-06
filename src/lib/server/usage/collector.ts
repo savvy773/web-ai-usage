@@ -155,6 +155,10 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 			console.warn(
 				`[collector] ${provider.name} attempt ${attempt}/${MAX_COLLECTION_ATTEMPTS}: ${latestResult.status} - ${latestResult.message}. ${details}`
 			);
+			const truncatedOutput = output.length > 1000 ? `... ${output.slice(-1000)}` : output;
+			console.warn(
+				`[collector-error-diagnostics] ${provider.name} raw output tail (length=${output.length}):\n${truncatedOutput}\n[collector-error-diagnostics] Diagnostics details: phase=${diagnostics.phase}, markers=${diagnostics.markers.join(',')}`
+			);
 		}
 	}
 
