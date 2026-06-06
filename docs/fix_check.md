@@ -28,7 +28,7 @@ Expected result:
 - Server is running on `127.0.0.1:5173`.
 - Refresh starts without CSRF errors.
 - `refreshState.refreshing` eventually becomes `false`.
-- Claude, Codex, and Gemini are `ok` unless the CLI itself is unavailable.
+- Claude, Codex, and Antigravity are `ok` unless the CLI itself is unavailable.
 
 ## Debug Order
 
@@ -76,7 +76,7 @@ Escalate to collector/runtime investigation when new lines repeat:
 - a Microsoft Visual C++ Runtime assertion dialog mentioning `node-pty` or `conpty.node`
 - repeated `markers=none` entries after the final attempt
 - `claude-trust-prompt` or `codex-update-prompt`
-- startup/redraw phases such as `claude-startup-or-redraw`, `codex-startup-or-redraw`, or `gemini-startup-or-redraw`
+- startup/redraw phases such as `claude-startup-or-redraw`, `codex-startup-or-redraw`, or `gemini-startup-or-redraw` (for Antigravity)
 - final-attempt `partial` warnings for all providers in the same refresh bucket
 
 Escalate to parser investigation only when the raw or latest parsed snapshot clearly contains usage rows but the parsed provider result is still `partial`.
@@ -95,10 +95,10 @@ Windows `node-pty` assertion dialogs are native process failures, so the browser
 | `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial      |
 | `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should clear the prompt, wait briefly, and resend `/status` |
 | `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                                |
-| `gemini-auth-wait`                   | Gemini is waiting for auth/trust flow                            | Do not spend `/model` fallback during auth wait                                          |
-| `gemini-slash-buffer-waiting`        | `/model` is still in the input buffer                            | Check confirmation Enter and settle timing                                               |
-| `gemini-ready-without-model-screen`  | Gemini prompt returned, but no model panel opened                | Check slash reissue guard                                                                |
-| `gemini-model-screen-incomplete`     | Model panel opened, but rows/resets are incomplete               | Check `\r` handling and panel boundary parsing                                           |
+| `gemini-auth-wait`                   | Antigravity is waiting for auth/trust flow                       | Do not spend `/usage` fallback during auth wait                                          |
+| `gemini-slash-buffer-waiting`        | `/usage` is still in the input buffer                            | Check confirmation Enter and settle timing                                               |
+| `gemini-ready-without-model-screen`  | Antigravity prompt returned, but no model panel opened           | Check slash reissue guard                                                                |
+| `gemini-model-screen-incomplete`     | Antigravity model panel opened, but rows/resets are incomplete   | Check `\r` handling and panel boundary parsing                                           |
 | startup/redraw with `markers=none`   | Raw has boot/progress output only                                | Treat as collector readiness/timing first                                                |
 
 ## Provider Checks
@@ -117,12 +117,12 @@ Codex:
 - `Limits: refresh requested; run /status again shortly.` should trigger same-session `/status` retries.
 - If raw output shows `u/status`, or repeated `/status` prompt text without `5h limit` / `Weekly limit` rows, the retry was appended to stale input instead of being submitted cleanly. Codex can render `›/statusgpt-...` without a newline; the collector should still treat that as a visible slash buffer. `/statusline` completion text is harmless when the phase is `usage-output-complete`.
 
-Gemini:
+Antigravity:
 
-- Raw should include `Model usage`.
-- Parsed output should show at least 3 model rows.
-- `quota-percent` without `model-screen` usually means `/model` did not open the panel yet.
-- `parsed-models=1/3` or `missing reset-word` usually points to redraw or panel-boundary parsing.
+- Raw should include `Model Quota` or `Model usage`.
+- Parsed output should show at least 1 whitelisted model row.
+- `quota-percent` without `model-screen` usually means `/usage` did not open the panel yet.
+- `parsed-models=1/1` points to redraw or panel-boundary parsing.
 
 ## Common Symptoms
 
@@ -133,10 +133,13 @@ Gemini:
 | All providers become partial in one bucket         | CLI startup/auth timing or `node-pty` path issue    | Inspect latest and last-failure raw snapshots               |
 | Latest UI still shows usable values after partial  | Storage carried forward previous usable snapshot    | Check provider status/message for latest failure            |
 | Cold boot shows Claude `Unavailable` / `Unknown`   | Startup refresh ran before Claude accepted `/usage` | Keep previous usable history and delay startup auto-refresh |
-| Gemini has status rows but no models               | `/model` panel was not opened or not settled        | Check slash buffer, auth wait, and reissue guard            |
+| Antigravity has status rows but no models          | `/usage` panel was not opened or not settled        | Check slash buffer, auth wait, and reissue guard            |
 | Codex shows `Unknown` or `100%`                    | Parser read a status line instead of limit rows     | Narrow Codex parser to limit rows                           |
 | Visual C++ assertion dialog mentions `conpty.node` | Bundled ConPTY DLL or PTY cleanup path crashed      | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server        |
 | `collector.log` looks quiet during success         | Successful raw snapshots are the stronger evidence  | Check `data\raw\*-latest.parsed.json`                       |
+| Tracked process shows `Recognized: False`          | Date format mismatch during JSON serialization      | Fixed by comparing process creation dates with 2s margin    |
+| `AttachConsole failed` in startup log              | node-pty / Windows console API compatibility issue  | Non-blocking warning unless Vite server fails to start      |
+| `Cannot find name 'ModelUsage'` on build           | Missing export/import of ModelUsage type in UI      | Fixed by importing ModelUsage from `$lib/usage`             |
 
 ## When To Change Code
 
