@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<!-- v1.0.0 build -->
+<!-- v1.0.1 build -->
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Usage Dashboard</title>
-  <meta name="description" content="Monitor Claude, Codex, and Gemini CLI usage in one local dashboard." />
+  <meta name="description" content="Monitor Claude, Codex, and Antigravity CLI usage in one local dashboard." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..900;1,14..32,300..900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -559,7 +559,7 @@
       </h1>
 
       <p class="hero-sub fi fd2">
-        Monitor Claude, Codex, and Gemini CLI in one local dashboard.
+        Monitor Claude, Codex, and Antigravity CLI in one local dashboard.
         Real-time collection, smart retry, and live server logs —
         running entirely on your machine.
       </p>
@@ -579,7 +579,7 @@
         <span class="plab">Works with</span>
         <span class="pchip pc1"><span class="pdot" style="background:#fb923c"></span>Claude</span>
         <span class="pchip pc2"><span class="pdot" style="background:#22d3ee"></span>Codex</span>
-        <span class="pchip pc3"><span class="pdot" style="background:#34d399"></span>Gemini CLI</span>
+        <span class="pchip pc3"><span class="pdot" style="background:#34d399"></span>Antigravity CLI</span>
       </div>
     </div>
 
@@ -627,7 +627,7 @@
     <div class="fc">
       <div class="fic" style="background:rgba(251,146,60,.1);color:#fb923c">⚡</div>
       <h3>Multi-Provider Collection</h3>
-      <p>Runs Claude <code>/usage</code>, Codex <code>/status</code>, and Gemini <code>/model</code> in virtual terminals — no API keys needed.</p>
+      <p>Runs Claude <code>/usage</code>, Codex <code>/status</code>, and Antigravity <code>/usage</code> in virtual terminals — no API keys needed.</p>
     </div>
     <div class="fc">
       <div class="fic" style="background:rgba(34,211,238,.1);color:#22d3ee">↻</div>
@@ -676,7 +676,7 @@
         <span class="tco"># pick the ones you use</span><br>
         npm i -g @anthropic-ai/claude-code<br>
         npm i -g @openai/codex<br>
-        npm i -g @google/gemini-cli
+        <span class="tco"># Antigravity CLI is installed using agy executable</span>
       </div>
     </div>
     <div class="flow-arrow">→</div>
@@ -688,7 +688,7 @@
         cd %USERPROFILE%<br>
         <span class="tk">claude</span> <span class="tco">→ OAuth → /exit</span><br>
         <span class="tk">codex</span>  <span class="tco">→ setup → exit</span><br>
-        <span class="tk">gemini --skip-trust</span> <span class="tco">→ exit</span>
+        <span class="tk">agy --dangerously-skip-permissions</span> <span class="tco">→ exit</span>
       </div>
     </div>
     <div class="flow-arrow">→</div>
