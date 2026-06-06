@@ -17,7 +17,13 @@
 		message: string;
 		timestamp: string;
 	}
-	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
+	import type {
+		ModelUsage,
+		ProviderUsage,
+		UsagePayload,
+		UsageWindow,
+		UsageWindowId
+	} from '$lib/usage';
 	import type { PageData } from './$types';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
@@ -32,13 +38,7 @@
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 	const DAY_MS = 24 * 60 * 60 * 1000;
 	const MIN_WEEKLY_PACE_TARGET = 20;
-	const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en', {
-		hour: '2-digit',
-		minute: '2-digit',
-		second: '2-digit',
-		month: 'short',
-		day: 'numeric'
-	});
+
 	const CLOCK_FORMATTER = new Intl.DateTimeFormat('en', {
 		hour: '2-digit',
 		minute: '2-digit',
@@ -352,11 +352,6 @@
 		}
 	}
 
-	function formatDateTime(value: string | null) {
-		if (!value) return 'Not collected';
-		return DATE_TIME_FORMATTER.format(new Date(value));
-	}
-
 	function formatClock(value: Date) {
 		return CLOCK_FORMATTER.format(value);
 	}
@@ -401,6 +396,45 @@
 		return `${Math.max(0, Math.min(100, value ?? 0))}%`;
 	}
 
+	type ModelGroup = {
+		labels: string[];
+		percent: number | null;
+		remainingText: string | null;
+		resetAt: string | null;
+	};
+
+	function groupModelUsages(models: ModelUsage[]): ModelGroup[] {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const groups = new Map<string, ModelGroup>();
+		for (const m of models) {
+			if (m.label === 'GPT-OSS 120B') continue;
+			const key = `${m.percent ?? 'null'}|${m.remainingText ?? m.resetAt ?? 'none'}`;
+			const existing = groups.get(key);
+			if (existing) {
+				existing.labels.push(m.label);
+			} else {
+				groups.set(key, {
+					labels: [m.label],
+					percent: m.percent,
+					remainingText: m.remainingText,
+					resetAt: m.resetAt
+				});
+			}
+		}
+		const result = [...groups.values()];
+		for (const group of result) {
+			const hasGemini = group.labels.some(
+				(label) => label.toLowerCase().includes('flash') || label.toLowerCase().includes('gemini')
+			);
+			if (hasGemini) {
+				group.labels = ['Gemini'];
+			} else {
+				group.labels = ['Other Models'];
+			}
+		}
+		return result;
+	}
+
 	function formatAmount(value: number | null) {
 		if (value === null) return 'Unknown';
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -414,7 +448,7 @@
 	}
 
 	function resetParts(window: UsageWindow) {
-		return resetPartsFromText(countdownText(window));
+		return resetPartsFromText(countdownText(window.resetAt, window.remainingText));
 	}
 
 	function resetPartsFromText(text: string) {
@@ -440,9 +474,9 @@
 		return parts.filter((part) => part.visible);
 	}
 
-	function countdownText(window: UsageWindow) {
-		if (window.resetAt) {
-			const diff = Date.parse(window.resetAt) - now.getTime();
+	function countdownText(resetAt: string | null, remainingText: string | null = null) {
+		if (resetAt) {
+			const diff = Date.parse(resetAt) - now.getTime();
 			if (diff <= 0) return '0m';
 
 			const minutes = Math.floor(diff / 60_000);
@@ -454,7 +488,7 @@
 			return `${remainingMinutes}m`;
 		}
 
-		return window.remainingText ?? 'Unknown';
+		return remainingText ?? 'Unknown';
 	}
 
 	function weeklyPace(window: UsageWindow) {
@@ -837,7 +871,7 @@
 				Loading usage data...
 			</div>
 		{:else}
-			<div class="grid gap-4 lg:grid-cols-3">
+			<div class="grid gap-5 grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
 				{#each providers as provider (provider.provider)}
 					<article class="flex h-full flex-col rounded-md border bg-card p-5 shadow-sm">
 						<div class="flex items-center justify-between gap-3">
@@ -862,105 +896,114 @@
 							</div>
 						</div>
 
-						<div class="mt-5 grid gap-3">
+						<div class="mt-5">
 							{#if provider.provider !== 'gemini'}
-								{#each WINDOW_ORDER as windowId (windowId)}
-									{@const usageWindow = provider.windows[windowId]}
-									<div
-										class="flex h-32 flex-col justify-between rounded-md border bg-background p-4"
-									>
-										<div class="flex items-center justify-between gap-3">
-											<div>
-												<div class="text-sm font-medium">{usageWindow.label}</div>
-												{#if usageText(usageWindow)}
-													<div class="mt-1 text-xs text-muted-foreground">
-														{usageText(usageWindow)}
+								<div class="grid gap-2.5 grid-cols-1">
+									{#each WINDOW_ORDER as windowId (windowId)}
+										{@const usageWindow = provider.windows[windowId]}
+										<div
+											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 backdrop-blur-sm transition-all duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
+										>
+											<div class="flex items-center justify-between gap-3">
+												<div class="min-w-0">
+													<div class="truncate text-[13px] font-semibold text-foreground/95">
+														{usageWindow.label}
 													</div>
-												{/if}
+													{#if usageText(usageWindow)}
+														<div class="mt-0.5 truncate text-[11px] text-muted-foreground">
+															{usageText(usageWindow)}
+														</div>
+													{/if}
+												</div>
+												<div class="shrink-0 text-right">
+													<div
+														class="text-xl font-bold tracking-tight"
+														style={`color: ${heatColor(usageWindow.percent)}`}
+													>
+														{percentLabel(usageWindow.percent)}
+													</div>
+												</div>
 											</div>
-											<div class="text-right">
+
+											<div class="relative h-1.5 overflow-hidden rounded-full bg-slate-950/60">
+												<div class="absolute top-0 left-[80%] z-10 h-full w-px bg-slate-800"></div>
 												<div
-													class="text-2xl font-semibold"
-													style={`color: ${heatColor(usageWindow.percent)}`}
-												>
-													{percentLabel(usageWindow.percent)}
+													class="h-full rounded-full transition-all"
+													style={`width: ${barWidth(usageWindow.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(usageWindow.percent)});`}
+												></div>
+											</div>
+
+											<div class="flex items-center justify-between gap-3 text-[11px]">
+												<div class="flex items-center gap-1.5 text-foreground/50">
+													<Clock3 class="size-3" />
+													<span class="font-medium tracking-[0.12em] uppercase">Reset</span>
+												</div>
+												<div class="text-right">
+													<div
+														class="flex items-center justify-end gap-0.5 font-mono text-xs font-semibold text-foreground/85"
+													>
+														{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
+															<span class={part.tone}>{part.value}{part.unit}</span>
+														{/each}
+													</div>
 												</div>
 											</div>
 										</div>
-
-										<div class="relative mt-4 h-3 overflow-hidden rounded-full bg-muted">
-											<div
-												class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"
-											></div>
-											<div
-												class="h-full rounded-full transition-all"
-												style={`width: ${barWidth(usageWindow.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(usageWindow.percent)});`}
-											></div>
-										</div>
-
-										<div class="mt-3 flex items-center justify-between gap-3 text-[11px]">
-											<div class="flex items-center gap-1.5 text-foreground/60">
-												<Clock3 class="size-3" />
-												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
-											</div>
-											<div class="text-right">
-												<div
-													class="flex items-center justify-end gap-1 font-mono text-sm font-semibold text-foreground/90"
-												>
-													{#each resetParts(usageWindow) as part (`${usageWindow.id}-${part.unit || part.value}`)}
-														<span class={part.tone}>{part.value}{part.unit}</span>
-													{/each}
-												</div>
-											</div>
-										</div>
-									</div>
-								{/each}
+									{/each}
+								</div>
 							{/if}
 
 							{#if (provider.modelUsages ?? []).length > 0}
-								{#each provider.modelUsages ?? [] as model (model.label)}
-									<div
-										class="flex h-32 flex-col justify-between rounded-md border bg-background p-4"
-									>
-										<div class="flex items-center justify-between gap-3">
-											<div>
-												<div class="text-sm font-medium">{model.label}</div>
+								<div class="grid gap-2.5 grid-cols-1">
+									{#each groupModelUsages(provider.modelUsages ?? []) as group (group.labels.join(','))}
+										<div
+											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 backdrop-blur-sm transition-all duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
+										>
+											<div class="flex items-center justify-between gap-3">
+												<div class="min-w-0">
+													<div
+														class="text-[13px] font-semibold text-foreground/95 leading-snug"
+														title={group.labels.join(' · ')}
+													>
+														{group.labels.join(' · ')}
+													</div>
+												</div>
+												<div class="shrink-0 text-right">
+													<div
+														class="text-xl font-bold tracking-tight"
+														style={`color: ${heatColor(group.percent)}`}
+													>
+														{percentLabel(group.percent)}
+													</div>
+												</div>
 											</div>
-											<div class="text-right">
+
+											<div class="relative h-1.5 overflow-hidden rounded-full bg-slate-950/60">
+												<div class="absolute top-0 left-[80%] z-10 h-full w-px bg-slate-800"></div>
 												<div
-													class="text-2xl font-semibold"
-													style={`color: ${heatColor(model.percent)}`}
-												>
-													{percentLabel(model.percent)}
+													class="h-full rounded-full transition-all"
+													style={`width: ${barWidth(group.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(group.percent)});`}
+												></div>
+											</div>
+
+											<div class="flex items-center justify-between gap-3 text-[11px]">
+												<div class="flex items-center gap-1.5 text-foreground/50">
+													<Clock3 class="size-3" />
+													<span class="font-medium tracking-[0.12em] uppercase">Reset</span>
+												</div>
+												<div class="text-right">
+													<div
+														class="flex items-center justify-end gap-0.5 font-mono text-xs font-semibold text-foreground/85"
+													>
+														{#each resetPartsFromText(countdownText(group.resetAt, group.remainingText)) as part (`${group.labels[0]}-sub-${part.unit || part.value}`)}
+															<span class={part.tone}>{part.value}{part.unit}</span>
+														{/each}
+													</div>
 												</div>
 											</div>
 										</div>
-
-										<div class="relative mt-4 h-3 overflow-hidden rounded-full bg-muted">
-											<div
-												class="absolute top-0 left-[80%] z-10 h-full w-px bg-foreground/70"
-											></div>
-											<div
-												class="h-full rounded-full transition-all"
-												style={`width: ${barWidth(model.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(model.percent)});`}
-											></div>
-										</div>
-
-										<div class="mt-3 flex items-center justify-between gap-3 text-[11px]">
-											<div class="flex items-center gap-1.5 text-foreground/60">
-												<Clock3 class="size-3" />
-												<span class="font-medium tracking-[0.14em] uppercase">Reset</span>
-											</div>
-											<div
-												class="flex items-center gap-1 font-mono text-sm font-semibold text-foreground/90"
-											>
-												{#each resetPartsFromText(model.remainingText ?? formatDateTime(model.resetAt)) as part (`${model.label}-${part.unit || part.value}`)}
-													<span class={part.tone}>{part.value}{part.unit}</span>
-												{/each}
-											</div>
-										</div>
-									</div>
-								{/each}
+									{/each}
+								</div>
 							{/if}
 						</div>
 
