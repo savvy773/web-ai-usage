@@ -52,7 +52,7 @@ Write-Host ""
 
 Write-Step "Checking requirements..."
 
-function Refresh-Path {
+function Update-Path {
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("PATH","User")
 }
@@ -65,7 +65,7 @@ function Install-WithWinget {
     Write-Step "$name not found — installing via winget..."
     winget install --id $id --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Fail "winget failed to install $name. Install manually." }
-    Refresh-Path
+    Update-Path
     Write-Ok "$name installed"
 }
 
@@ -90,7 +90,7 @@ if (-not (Test-Cmd "pnpm")) {
     Write-Step "pnpm not found — installing globally via npm..."
     npm install -g pnpm --silent 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to install pnpm. Run manually: npm install -g pnpm" }
-    Refresh-Path
+    Update-Path
     Write-Ok "pnpm installed"
 } else {
     Write-Ok "pnpm found"
