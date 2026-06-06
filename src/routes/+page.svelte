@@ -33,7 +33,7 @@
 	const USAGE_REQUEST_RETRIES = 2;
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
-	const REFRESH_POLL_ATTEMPTS = 24;
+	const REFRESH_POLL_ATTEMPTS = 40;
 	const STARTUP_AUTO_REFRESH_GRACE_MS = 120_000;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 	const DAY_MS = 24 * 60 * 60 * 1000;
@@ -86,11 +86,11 @@
 	$effect(() => {
 		if (!autoRefresh || refreshing || refreshLocked || !payload?.nextRefreshAt) return;
 
-		const delay = Math.max(
-			0,
-			Date.parse(payload.nextRefreshAt) - Date.now() + AUTO_REFRESH_SETTLE_MS
-		);
-		const timer = window.setTimeout(() => void refreshUsage(), delay);
+		const parsedRefreshTime = Date.parse(payload.nextRefreshAt);
+		if (Number.isNaN(parsedRefreshTime)) return;
+
+		const delay = Math.max(0, parsedRefreshTime - Date.now() + AUTO_REFRESH_SETTLE_MS);
+		const timer = window.setTimeout(() => void refreshUsage('auto'), delay);
 
 		return () => {
 			window.clearTimeout(timer);
@@ -162,7 +162,8 @@
 		mode: 'manual' | 'auto' = 'manual',
 		options: { force?: boolean } = {}
 	) {
-		if (refreshing || (!options.force && isRefreshCoolingDown(refreshCooldownUntil))) {
+		const isAuto = mode === 'auto';
+		if (refreshing || (!options.force && !isAuto && isRefreshCoolingDown(refreshCooldownUntil))) {
 			return;
 		}
 
@@ -372,7 +373,10 @@
 
 	function formatRefreshCountdown(value: string | null) {
 		if (!value) return '--m --s';
-		const diff = Math.max(0, Date.parse(value) - now.getTime());
+		const parsed = Date.parse(value);
+		if (Number.isNaN(parsed)) return '--m --s';
+
+		const diff = Math.max(0, parsed - now.getTime());
 		const totalSeconds = Math.floor(diff / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
 		const seconds = totalSeconds % 60;
@@ -408,7 +412,14 @@
 		const groups = new Map<string, ModelGroup>();
 		for (const m of models) {
 			if (m.label === 'GPT-OSS 120B') continue;
-			const key = `${m.percent ?? 'null'}|${m.remainingText ?? m.resetAt ?? 'none'}`;
+
+			const isGemini =
+				m.label.toLowerCase().includes('flash') ||
+				m.label.toLowerCase().includes('gemini') ||
+				m.label.toLowerCase().includes('pro');
+			const typeKey = isGemini ? 'gemini' : 'other';
+			const key = `${typeKey}|${m.percent ?? 'null'}|${m.remainingText ?? m.resetAt ?? 'none'}`;
+
 			const existing = groups.get(key);
 			if (existing) {
 				existing.labels.push(m.label);
@@ -476,7 +487,11 @@
 
 	function countdownText(resetAt: string | null, remainingText: string | null = null) {
 		if (resetAt) {
-			const diff = Date.parse(resetAt) - now.getTime();
+			const parsed = Date.parse(resetAt);
+			if (Number.isNaN(parsed)) {
+				return remainingText ?? 'Unknown';
+			}
+			const diff = parsed - now.getTime();
 			if (diff <= 0) return '0m';
 
 			const minutes = Math.floor(diff / 60_000);
@@ -699,7 +714,7 @@
 	}
 
 	function formatCountdown(timestamp: number | null) {
-		if (!timestamp) return null;
+		if (!timestamp || !Number.isFinite(timestamp)) return null;
 		const diff = Math.max(0, timestamp - now.getTime());
 		const totalSeconds = Math.floor(diff / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
