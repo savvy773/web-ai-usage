@@ -10,11 +10,11 @@ This document is the short implementation reference. Use `fix_check.md` when a r
 
 AI Usage Dashboard is a local SvelteKit app that reads usage from three CLI tools:
 
-| Provider   | Command               | Usage command | Dashboard view           |
-| ---------- | --------------------- | ------------- | ------------------------ |
-| Claude     | `claude`              | `/usage`      | current session and week |
-| Codex      | `codex`               | `/status`     | 5h and weekly limits     |
-| Gemini CLI | `gemini --skip-trust` | `/model`      | per-model usage          |
+| Provider        | Command                              | Usage command | Dashboard view           |
+| --------------- | ------------------------------------ | ------------- | ------------------------ |
+| Claude          | `claude`                             | `/usage`      | current session and week |
+| Codex           | `codex`                              | `/status`     | 5h and weekly limits     |
+| Antigravity CLI | `agy --dangerously-skip-permissions` | `/usage`      | per-model usage          |
 
 The browser never runs CLIs. It reads JSON from the SvelteKit server. The server owns CLI execution, parsing, retries, history, and debug files.
 
@@ -95,7 +95,7 @@ Key timings:
 
 Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. When `.env` sets `AI_USAGE_CWD` or `AI_USAGE_CWD_CANDIDATES`, those shared candidates are used directly, up to three paths total. If both are unset, defaults come from the workspace-level `_temp` directory when installed under `_toolkit\aI_usage`, then OS temp variables. Relative `.env` paths are resolved from the dashboard project root, and `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime for multi-PC setups. The working directory should stay outside the dashboard Git repo to avoid repo-root trust prompts. The collector creates a missing working directory before launching a CLI, but does not create persistent files inside it. Codex may show a ready prompt while MCP startup is still redrawing, so `/status` confirmation is repeated while the slash command remains in the input buffer. If Codex says `Limits: refresh requested`, the collector clears any stale prompt text before resending `/status`, and only the latest Codex status signal decides whether the capture is still pending. If Codex still returns `codex-loading` with no usage markers, the attempt is treated as a startup miss instead of a reportable recovery. Claude can take longer to fill the `/usage` panel; incomplete usage output retries in the same working directory, while trust prompts are detected quickly and move to the next candidate. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
 
-Provider-specific variables (`AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI`, plus matching `AI_USAGE_CWD_CANDIDATES_*`) are only needed for unusual setups and are merged before shared candidates. Each provider uses at most three working-directory candidates per refresh.
+Provider-specific variables (`AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI` for Antigravity, plus matching `AI_USAGE_CWD_CANDIDATES_*`) are only needed for unusual setups and are merged before shared candidates. Each provider uses at most three working-directory candidates per refresh.
 
 Codex trust is user-scoped in `%USERPROFILE%\.codex\config.toml`, not project-scoped in this repository.
 
@@ -114,11 +114,11 @@ Codex:
 - Ignores status lines such as `100% context left`.
 - Reissues `/status` in the same session when Codex says refresh was requested, clearing the prompt first so retries do not append to stale input.
 
-Gemini:
+Antigravity:
 
-- Reads the latest complete `Model usage` panel.
-- Accepts model rows such as `Flash`, `Flash Lite`, `Pro`, and `gemini-*`.
-- Requires at least 3 model rows with reset or remaining-time data.
+- Reads the latest complete `Model Quota` or `Model usage` panel.
+- Accepts whitelisted model rows: `Gemini 3.5 Flash (High)`, `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, and `GPT-OSS 120B (Medium)`.
+- Requires at least 1 model row with reset or remaining-time data.
 - Treats auth wait, slash-buffer wait, and incomplete model screens as collector timing states before assuming parser failure.
 
 ## Normalization
@@ -198,5 +198,5 @@ Healthy refresh criteria:
 - Server is recognized by `.\scripts\start-server.ps1 -Status`.
 - All providers are `ok`, or a provider has a clear partial/unavailable reason.
 - Parsed snapshots show `phase=usage-output-complete` for successful providers.
-- Gemini has at least 3 parsed model rows.
+- Antigravity has at least 1 parsed model row.
 - SSR HTML contains the initial payload and provider names.
