@@ -4,7 +4,7 @@
   <br /><br />
 
   <h1>AI Usage Dashboard</h1>
-  <p>Monitor <strong>Claude</strong>, <strong>Codex</strong>, and <strong>Gemini CLI</strong> usage in one local dashboard.<br />No cloud. No telemetry. Runs entirely on your machine.</p>
+  <p>Monitor <strong>Claude</strong>, <strong>Codex</strong>, and <strong>Antigravity CLI</strong> usage in one local dashboard.<br />No cloud. No telemetry. Runs entirely on your machine.</p>
 
   <br />
 
@@ -52,7 +52,7 @@ A **SvelteKit server** spawns each CLI in a virtual terminal via **node-pty**, c
 
 ```mermaid
 flowchart LR
-    A["① Install CLIs\nnpm i -g claude-code\nnpm i -g codex\nnpm i -g gemini-cli"] --> B["② Authenticate\ncd %USERPROFILE%\nclaude → codex → gemini\n(complete login once)"]
+    A["① Install CLIs\nclaude-code & codex\n(and Antigravity CLI)"] --> B["② Authenticate\ncd %USERPROFILE%\nclaude → codex → agy\n(complete login once)"]
     B --> C["③ Install Dashboard\nirm …/install.ps1 | iex\n(auto-installs git, node, pnpm)"]
     C --> D["④ View Usage\nstart-server.ps1 -Open\n→ 127.0.0.1:5173"]
 
@@ -68,7 +68,7 @@ flowchart LR
 
 |     | Feature              | Description                                                                                 |
 | :-: | :------------------- | :------------------------------------------------------------------------------------------ |
-| ⚡  | **Multi-provider**   | Runs Claude `/usage` · Codex `/status` · Gemini `/model` in virtual terminals               |
+| ⚡  | **Multi-provider**   | Runs Claude `/usage` · Codex `/status` · Antigravity `/usage` in virtual terminals          |
 |  ↻  | **Smart retry**      | Up to 5 attempts with phase diagnostics and repeated slash-command confirmation             |
 | 📊  | **Weekly Pace card** | Usage bar vs. 20 % minimum threshold — see if you're on track                               |
 |  ⏱  | **Reset countdown**  | Live per-provider countdown to next usage reset                                             |
@@ -86,7 +86,7 @@ The dashboard collects data by running each CLI in a virtual terminal. **Install
 ```powershell
 npm install -g @anthropic-ai/claude-code   # Claude
 npm install -g @openai/codex               # Codex
-npm install -g @google/gemini-cli          # Gemini CLI
+# Antigravity CLI is installed locally using the agy package/executable.
 ```
 
 ### Step 2 — Pre-authenticate each CLI
@@ -101,7 +101,7 @@ cd ..\..\_temp
 
 claude               # → complete browser OAuth → type /exit
 codex                # → complete setup wizard → exit
-gemini --skip-trust  # → complete Google auth  → exit
+agy --dangerously-skip-permissions  # → complete Google auth  → exit
 ```
 
 > If you want CLIs to run in a different directory, set `AI_USAGE_CWD` in `.env` — but you must authenticate there too. See [Custom CLI working directory](#) below.
@@ -197,7 +197,7 @@ AI_USAGE_CWD=..\..\_temp
 AI_USAGE_CWD_CANDIDATES=%TEMP%
 ```
 
-Relative paths such as `..\..\_temp` are resolved from the dashboard project root, so the same config works across PCs after `irm` installation. Keep this directory outside the Git repo to avoid repo-root trust prompts. `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime. The collector creates the working directory if it is missing, but it does not intentionally create persistent files inside it; if a CLI creates temporary files, it owns their cleanup. Each CLI uses at most three candidates. Shared settings are enough for normal use. To customize an unusual provider-specific setup, set `AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI`, or their `AI_USAGE_CWD_CANDIDATES_*` variants. Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`. Claude retries incomplete `/usage` loading in the same working directory; it only advances to the next candidate when a trust prompt blocks collection.
+Relative paths such as `..\..\_temp` are resolved from the dashboard project root, so the same config works across PCs after `irm` installation. Keep this directory outside the Git repo to avoid repo-root trust prompts. `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime. The collector creates the working directory if it is missing, but it does not intentionally create persistent files inside it; if a CLI creates temporary files, it owns their cleanup. Each CLI uses at most three candidates. Shared settings are enough for normal use. To customize an unusual provider-specific setup, set `AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI` (used by Antigravity), or their `AI_USAGE_CWD_CANDIDATES_*` variants. Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`. Claude retries incomplete `/usage` loading in the same working directory; it only advances to the next candidate when a trust prompt blocks collection.
 
 Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` under `[projects.'path']` entries with `trust_level = "trusted"`.
 
@@ -207,13 +207,13 @@ Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` 
 
 ## 🖥 CLI Targets
 
-| Provider   | Command               | Slash     | Shows                          |
-| :--------- | :-------------------- | :-------- | :----------------------------- |
-| Claude     | `claude`              | `/usage`  | current session + weekly usage |
-| Codex      | `codex`               | `/status` | 5h limit + weekly limit        |
-| Gemini CLI | `gemini --skip-trust` | `/model`  | per-model usage + resets       |
+| Provider        | Command                              | Slash     | Shows                          |
+| :-------------- | :----------------------------------- | :-------- | :----------------------------- |
+| Claude          | `claude`                             | `/usage`  | current session + weekly usage |
+| Codex           | `codex`                              | `/status` | 5h limit + weekly limit        |
+| Antigravity CLI | `agy --dangerously-skip-permissions` | `/usage`  | per-model usage + resets       |
 
-> `--skip-trust` bypasses Gemini's workspace prompt. Claude and Codex don't use equivalent flags — they affect auth policy and break collection.
+> `--dangerously-skip-permissions` bypasses Antigravity's workspace prompt. Claude and Codex don't use equivalent flags — they affect auth policy and break collection.
 
 <br />
 
