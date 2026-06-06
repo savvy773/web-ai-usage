@@ -244,7 +244,21 @@ function Stop-TrackedServer {
 
 	$trackedProcessId = [int]$state.processId
 	$trackedProcess = Get-ProcessInfo -ProcessId $trackedProcessId
-	if ($trackedProcess -and $state.processCreationDate -and $state.processCreationDate -ne $trackedProcess.CreationDate) {
+
+	$creationMatches = $false
+	if ($trackedProcess -and $state.processCreationDate) {
+		try {
+			$stateDate = [datetime]$state.processCreationDate
+			$trackedDate = [datetime]$trackedProcess.CreationDate
+			if ([Math]::Abs(($stateDate - $trackedDate).TotalSeconds) -lt 2) {
+				$creationMatches = $true
+			}
+		} catch {}
+	} elseif ($trackedProcess -and -not $state.processCreationDate) {
+		$creationMatches = $true
+	}
+
+	if ($trackedProcess -and -not $creationMatches) {
 		Write-Host "Ignoring stale state file because PID $trackedProcessId was reused by another process." -ForegroundColor Yellow
 		Remove-Item -LiteralPath $StatePath -Force -ErrorAction SilentlyContinue
 		return
@@ -401,9 +415,19 @@ function Show-ServerStatus {
 	if ($state) {
 		$trackedProcessId = [int]$state.processId
 		$trackedProcess = Get-ProcessInfo -ProcessId $trackedProcessId
-		$creationMatches = $trackedProcess -and (
-			-not $state.processCreationDate -or $state.processCreationDate -eq $trackedProcess.CreationDate
-		)
+
+		$creationMatches = $false
+		if ($trackedProcess -and $state.processCreationDate) {
+			try {
+				$stateDate = [datetime]$state.processCreationDate
+				$trackedDate = [datetime]$trackedProcess.CreationDate
+				if ([Math]::Abs(($stateDate - $trackedDate).TotalSeconds) -lt 2) {
+					$creationMatches = $true
+				}
+			} catch {}
+		} elseif ($trackedProcess -and -not $state.processCreationDate) {
+			$creationMatches = $true
+		}
 		$recognized = $creationMatches -and (Test-DashboardProcessTree -RootProcessId $trackedProcessId)
 
 		Write-Host "Tracked process:"
