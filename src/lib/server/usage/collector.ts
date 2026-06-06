@@ -40,7 +40,8 @@ const MAX_SLASH_REISSUES = 3;
 const CODEX_UPDATE_SKIP_OPTION = '2';
 const TERMINAL_GRACEFUL_CLOSE_MS = 5000;
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
-const GEMINI_USAGE_ROW_LABEL_PATTERN = /^(?:Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
+const GEMINI_USAGE_ROW_LABEL_PATTERN =
+	/^(?:Gemini|Claude|GPT-OSS|Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
 const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
 const GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
 
@@ -246,7 +247,7 @@ async function runPtySlashCommand(
 			{
 				name: 'xterm-256color',
 				cols: providerId === 'gemini' ? 160 : 120,
-				rows: 36,
+				rows: providerId === 'gemini' ? 64 : 36,
 				cwd: workingDirectory,
 				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
 				useConptyDll: process.env.AI_USAGE_USE_CONPTY_DLL === '1'
@@ -513,7 +514,9 @@ function isCliReady(providerId: ProviderId, output: string) {
 		if (hasCodexUpdatePromptText(tail)) return false;
 		return isCodexReadyTail(tail);
 	}
-	return /Type your message|workspace\s+\(\/directory\)/i.test(tail);
+	const hasModelPrompt =
+		/(?:gemini|gpt|claude|opus|sonnet|flash|pro|oss|agy)[^\r\n]+ · [A-Z]:\\/i.test(tail);
+	return hasModelPrompt || /Type your message|workspace\s+\(\/directory\)/i.test(tail);
 }
 
 function shouldConfirmCodexSlashCommand(output: string, slashCommand: string) {
@@ -534,7 +537,7 @@ function hasGeminiModelScreen(output: string) {
 }
 
 function hasGeminiModelScreenText(value: string) {
-	return /Select Model|Model usage/i.test(value);
+	return /Select Model|Model usage|Model Quota/i.test(value);
 }
 
 function isCodexReadyTail(tail: string) {
@@ -770,9 +773,9 @@ function hasUsageOutput(providerId: ProviderId, output: string) {
 
 	if (providerId === 'gemini') {
 		return (
-			parsed.modelUsages.length >= 3 &&
+			parsed.modelUsages.length >= 1 &&
 			parsed.modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
-				.length >= 3
+				.length >= 1
 		);
 	}
 
@@ -938,12 +941,14 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 	if (providerId === 'gemini') {
 		const usageRows = lines
 			.map((line, index) => ({ raw: line, normalized: normalizedLines[index] }))
-			.filter((line) => isGeminiUsageRowCandidate(line.raw, line.normalized));
+			.filter((line, index) =>
+				isGeminiUsageRowCandidate(line.raw, line.normalized, index, lines, normalizedLines)
+			);
 		return [
-			normalizedLines.some((line) => /model usage|select model/i.test(line))
+			normalizedLines.some((line) => /model usage|select model|model quota/i.test(line))
 				? 'model-screen'
 				: null,
-			normalizedLines.some((line) => />\s*\/model\b/i.test(line)) ? 'slash-buffer' : null,
+			normalizedLines.some((line) => />\s*\/(?:model|usage)\b/i.test(line)) ? 'slash-buffer' : null,
 			usageRows.length > 0 ? 'model-name' : null,
 			usageRows.some((line) => GEMINI_BAR_RUN_PATTERN.test(line.raw)) ? 'bar-row' : null,
 			usageRows.some((line) => /\d+(?:\.\d+)?\s*%/.test(line.normalized)) ? 'percent' : null,
@@ -965,12 +970,28 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 	].filter((marker): marker is string => marker !== null);
 }
 
-function isGeminiUsageRowCandidate(rawLine: string, normalizedLine: string) {
-	return (
-		(GEMINI_USAGE_ROW_LABEL_PATTERN.test(normalizedLine) ||
-			isStructuredGeminiBarUsageRow(rawLine, normalizedLine)) &&
-		(GEMINI_BAR_RUN_PATTERN.test(rawLine) || /\d+(?:\.\d+)?\s*%/.test(normalizedLine))
-	);
+function isGeminiUsageRowCandidate(
+	rawLine: string,
+	normalizedLine: string,
+	index: number,
+	rawLines: string[],
+	normalizedLines: string[]
+) {
+	const prevNormalized = normalizedLines[index - 1] ?? '';
+	const nextNormalized = normalizedLines[index + 1] ?? '';
+
+	const hasLabel =
+		GEMINI_USAGE_ROW_LABEL_PATTERN.test(normalizedLine) ||
+		GEMINI_USAGE_ROW_LABEL_PATTERN.test(prevNormalized) ||
+		isStructuredGeminiBarUsageRow(rawLine, normalizedLine) ||
+		(prevNormalized && isStructuredGeminiBarUsageRow(rawLines[index - 1], prevNormalized));
+
+	const hasBarOrPercent =
+		GEMINI_BAR_RUN_PATTERN.test(rawLine) ||
+		/\d+(?:\.\d+)?\s*%/.test(normalizedLine) ||
+		/\d+(?:\.\d+)?\s*%/.test(nextNormalized);
+
+	return hasLabel && hasBarOrPercent;
 }
 
 function isTransientStartupMiss(
