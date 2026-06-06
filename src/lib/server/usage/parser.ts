@@ -22,8 +22,10 @@ const TERMINAL_ESCAPE_PATTERN = /\x1b(?:[()#%][0-~]|[78=>])/g;
 const SINGLE_CHARACTER_ESCAPE_PATTERN = /\x1b[@-_]/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
-const GEMINI_MODEL_NAME_PATTERN = /\b(Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
-const GEMINI_MODEL_LABEL_PATTERN = /^(?:Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)$/i;
+const GEMINI_MODEL_NAME_PATTERN =
+	/\b(Gemini\s+[\d.]+\s+Flash\s+\(High\)|Claude\s+Sonnet\s+[\d.]+\s+\(Thinking\)|Claude\s+Opus\s+[\d.]+\s+\(Thinking\)|GPT-OSS\s+[\d\w\s]+\(Medium\)|Gemini\s+[\d.]+\s+Flash(?:\s*\([^)]+\))?|Gemini\s+[\d.]+\s+Pro(?:\s*\([^)]+\))?|Claude\s+[A-Za-z0-9.]+(?:\s*\([^)]+\))?|GPT-[A-Za-z0-9.]+(?:\s*\([^)]+\))?|GPT-OSS\s+[\d\w\s]+(?:\s*\([^)]+\))?|Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)/gi;
+const GEMINI_MODEL_LABEL_PATTERN =
+	/^(?:Gemini\s+[\d.]+\s+Flash\s+\(High\)|Claude\s+Sonnet\s+[\d.]+\s+\(Thinking\)|Claude\s+Opus\s+[\d.]+\s+\(Thinking\)|GPT-OSS\s+[\d\w\s]+\(Medium\)|Gemini\s+[\d.]+\s+Flash(?:\s*\([^)]+\))?|Gemini\s+[\d.]+\s+Pro(?:\s*\([^)]+\))?|Claude\s+[A-Za-z0-9.]+(?:\s*\([^)]+\))?|GPT-[A-Za-z0-9.]+(?:\s*\([^)]+\))?|GPT-OSS\s+[\d\w\s]+(?:\s*\([^)]+\))?|Flash Lite|Flash|Pro|gemini-[A-Za-z0-9._\-…]+)$/i;
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const RESET_WORD_PATTERN = /\brese\s*(?:ts?|s)\s*:?\s*/i;
 export const BOX_DECORATION_PATTERN = /[│┃║┆┊╎╏╭╮╰╯┌┐└┘├┤[\]]/g;
@@ -97,7 +99,7 @@ export function parseProviderUsage(
 	const hasUsage =
 		providerId === 'gemini'
 			? modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
-					.length >= 3
+					.length >= 1
 			: providerId === 'codex'
 				? fiveHour.percent !== null && week.percent !== null
 				: fiveHour.percent !== null ||
@@ -339,15 +341,35 @@ function findLastMatch(value: string, pattern: RegExp) {
 
 function mergeGeminiModelUsages(usages: ModelUsage[]) {
 	const byLabel = new Map<string, ModelUsage>();
+	const allowedModels = [
+		'gemini 3.5 flash (high)',
+		'claude sonnet 4.6 (thinking)',
+		'claude opus 4.6 (thinking)',
+		'gpt-oss 120b (medium)'
+	];
+	// Short display labels for each whitelisted model
+	const shortLabels: Record<string, string> = {
+		'gemini 3.5 flash (high)': 'Flash 3.5 (High)',
+		'claude sonnet 4.6 (thinking)': 'Sonnet 4.6',
+		'claude opus 4.6 (thinking)': 'Opus 4.6',
+		'gpt-oss 120b (medium)': 'GPT-OSS 120B'
+	};
 
 	for (const usage of usages) {
 		const label = cleanGeminiModelLabel(usage.label);
 		if (!isGeminiAcceptedModelLabel(label)) continue;
 
-		const normalized = { ...usage, label };
-		const previous = byLabel.get(label);
+		const lowerLabel = label.toLowerCase().trim();
+		const matchedKey = allowedModels.find(
+			(allowed) => lowerLabel.includes(allowed) || allowed.includes(lowerLabel)
+		);
+		if (!matchedKey) continue;
+
+		const displayLabel = shortLabels[matchedKey] ?? label;
+		const normalized = { ...usage, label: displayLabel };
+		const previous = byLabel.get(displayLabel);
 		if (!previous || geminiUsageCompleteness(normalized) >= geminiUsageCompleteness(previous)) {
-			byLabel.set(label, normalized);
+			byLabel.set(displayLabel, normalized);
 		}
 	}
 
@@ -379,10 +401,10 @@ function geminiUsageCompleteness(usage: ModelUsage) {
 }
 
 function geminiModelSortIndex(label: string) {
-	if (/^Flash$/i.test(label)) return 0;
-	if (/^Flash Lite$/i.test(label)) return 1;
-	if (/^Pro$/i.test(label)) return 2;
-	if (/^gemini-/i.test(label)) return 3;
+	if (/flash/i.test(label)) return 0;
+	if (/sonnet/i.test(label)) return 1;
+	if (/opus/i.test(label)) return 2;
+	if (/gpt-oss/i.test(label)) return 3;
 	return 4;
 }
 
@@ -432,21 +454,23 @@ function buildGeminiBarModelRows(output: string) {
 			const line = rawLines[index];
 			if (!GEMINI_BAR_RUN_PATTERN.test(line)) continue;
 
-			const nextLine = rawLines[index + 1] ?? '';
-			const lineHasPercent = /\d+(?:\.\d+)?\s*%/.test(line);
-			const nextLineStartsWithPercent = /^\s*\d+(?:\.\d+)?\s*%/i.test(
-				normalizeGeminiUsageLine(nextLine)
-			);
-			let row = line;
+			const barMatch = line.match(GEMINI_BAR_RUN_PATTERN);
+			if (!barMatch || barMatch.index === undefined) continue;
 
-			if (!lineHasPercent && nextLineStartsWithPercent) {
-				row = `${row} ${nextLine}`;
+			const prevLine = rawLines[index - 1] ?? '';
+			const nextLine = rawLines[index + 1] ?? '';
+			const beforeBar = line.slice(0, barMatch.index).trim();
+			const hasLabelOnSameLine = /[A-Za-z0-9]/.test(beforeBar);
+
+			let row = line;
+			if (!hasLabelOnSameLine && prevLine && !GEMINI_BAR_RUN_PATTERN.test(prevLine)) {
+				row = `${prevLine} ${row}`;
 			}
 
-			const rowHasReset = /\bResets?\s*:?\s*/i.test(row);
-			const followingLine = rawLines[index + (row === line ? 1 : 2)] ?? '';
-			if (!rowHasReset && /\bResets?\s*:?\s*/i.test(followingLine)) {
-				row = `${row} ${followingLine}`;
+			const cleanNextLine = cleanGeminiModelLabel(nextLine);
+			const nextIsModelLabel = cleanNextLine && isGeminiAcceptedModelLabel(cleanNextLine);
+			if (nextLine && !GEMINI_BAR_RUN_PATTERN.test(nextLine) && !nextIsModelLabel) {
+				row = `${row} ${nextLine}`;
 			}
 
 			const normalized = row.replace(/\s+/g, ' ').trim();
@@ -502,14 +526,14 @@ function parseGeminiUsageAfterLabel(label: string, value: string): ModelUsage | 
 	if (!percentMatch || percentMatch.index === undefined) return null;
 	if (isGeminiStatusPercentContext(normalized, percentMatch)) return null;
 
-	const afterPercent = normalized.slice(percentMatch.index + percentMatch[0].length);
+	const afterPercent = normalized.slice(percentMatch.index + percentMatch[0].length).trim();
 	const resetText = afterPercent.match(/\bResets?\s*:?\s*(.+)$/i)?.[1]?.trim() ?? null;
 
 	return {
 		label,
-		percent: clampPercent(Number(percentMatch[1])) ?? 0,
+		percent: parseGeminiModelPercent(Number(percentMatch[1]), afterPercent),
 		resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-		remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+		remainingText: afterPercent ? parseGeminiRemainingText(resetText || afterPercent) : null
 	};
 }
 
@@ -535,15 +559,14 @@ function parseGeminiSplitModelUsageLines(lines: string[]): ModelUsage[] {
 		if (!pendingLabel || !percentMatch) continue;
 		if (isGeminiStatusPercentContext(line, percentMatch)) continue;
 
-		const resetMatch = line
-			.slice((percentMatch.index ?? 0) + percentMatch[0].length)
-			.match(/\bresets?\s*:?\s*(.+)$/i);
+		const afterPercent = line.slice((percentMatch.index ?? 0) + percentMatch[0].length).trim();
+		const resetMatch = afterPercent.match(/\bresets?\s*:?\s*(.+)$/i);
 		const resetText = resetMatch?.[1]?.trim() ?? null;
 		pairs.push({
 			label: pendingLabel,
-			percent: clampPercent(Number(percentMatch[1])) ?? 0,
+			percent: parseGeminiModelPercent(Number(percentMatch[1]), afterPercent),
 			resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-			remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+			remainingText: afterPercent ? parseGeminiRemainingText(resetText || afterPercent) : null
 		});
 		pendingLabel = null;
 	}
@@ -572,13 +595,19 @@ function parseGeminiOrderedModelPercentFallback(output: string, lines: string[])
 		candidates.push(
 			modelLabels.map((label, index) => {
 				const percentMatch = usablePercents[index];
-				const resetText = resetTextAfterPercent(chunk, percentMatch);
+				const afterPercent =
+					percentMatch.index !== undefined
+						? chunk.slice(percentMatch.index + percentMatch[0].length)
+						: '';
+				const nextPercentIndex = afterPercent.search(/\d+(?:\.\d+)?\s*%/);
+				const span = nextPercentIndex >= 0 ? afterPercent.slice(0, nextPercentIndex) : afterPercent;
+				const resetText = span.match(/\bResets?\s*:?\s*(.+)$/i)?.[1]?.trim() ?? null;
 
 				return {
 					label,
-					percent: clampPercent(Number(percentMatch[1])) ?? 0,
+					percent: parseGeminiModelPercent(Number(percentMatch[1]), span),
 					resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-					remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+					remainingText: span.trim() ? parseGeminiRemainingText(resetText || span) : null
 				};
 			})
 		);
@@ -623,15 +652,6 @@ function takeLastDistinctGeminiLabels(labels: string[]) {
 	return result;
 }
 
-function resetTextAfterPercent(chunk: string, percentMatch: RegExpMatchArray) {
-	if (percentMatch.index === undefined) return null;
-
-	const afterPercent = chunk.slice(percentMatch.index + percentMatch[0].length);
-	const nextPercentIndex = afterPercent.search(/\d+(?:\.\d+)?\s*%/);
-	const span = nextPercentIndex >= 0 ? afterPercent.slice(0, nextPercentIndex) : afterPercent;
-	return span.match(/\bResets?\s*:?\s*(.+)$/i)?.[1]?.trim() ?? null;
-}
-
 function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 	const normalized = normalizeGeminiUsageLine(line);
 	if (/model usage|select model/i.test(normalized)) {
@@ -645,16 +665,15 @@ function parseGeminiModelUsageLine(line: string): ModelUsage | null {
 	const label = cleanGeminiModelLabel(normalized.slice(0, percentMatch.index));
 	if (!isGeminiModelUsageLabel(label)) return null;
 
-	const resetMatch = normalized
-		.slice(percentMatch.index + percentMatch[0].length)
-		.match(/\bresets?\s*:?\s*(.+)$/i);
+	const afterPercent = normalized.slice(percentMatch.index + percentMatch[0].length).trim();
+	const resetMatch = afterPercent.match(/\bresets?\s*:?\s*(.+)$/i);
 	const resetText = resetMatch?.[1]?.trim() ?? null;
 
 	return {
 		label,
-		percent: clampPercent(Number(percentMatch[1])) ?? 0,
+		percent: parseGeminiModelPercent(Number(percentMatch[1]), afterPercent),
 		resetAt: resetText ? parseGeminiResetAt(resetText) : null,
-		remainingText: resetText ? parseGeminiRemainingText(resetText) : null
+		remainingText: afterPercent ? parseGeminiRemainingText(resetText || afterPercent) : null
 	};
 }
 
@@ -719,7 +738,7 @@ function isGeminiStructuredModelLabel(value: string) {
 		label.length <= 48 &&
 		/[A-Za-z0-9]/.test(label) &&
 		!/\d+(?:\.\d+)?\s*%/.test(label) &&
-		!/\b(model usage|select model|press esc|type your message|quota|limit|used|left|remaining|resets?)\b/i.test(
+		!/\b(model usage|select model|press esc|type your message|quota|limit|used|left|remaining|resets?|refreshes?|renews?)\b/i.test(
 			label
 		) &&
 		!/[/\\<>|]/.test(label)
@@ -738,7 +757,8 @@ function isGeminiStatusPercentContext(value: string, percentMatch: RegExpMatchAr
 	return (
 		/^\s*(?:used|left|remaining|available)\b/i.test(afterPercent) ||
 		(/\b(?:limit|quota)\b/i.test(`${beforePercent} ${afterPercent}`) &&
-			!/\bResets?\s*:/i.test(afterPercent))
+			!/\bResets?\s*:/i.test(afterPercent) &&
+			!/\bavailable\b/i.test(afterPercent))
 	);
 }
 
@@ -907,7 +927,21 @@ function parseGeminiResetAt(value: string) {
 
 function parseGeminiRemainingText(value: string) {
 	const durationMatch = value.match(/\(([^)]+)\)/);
-	return durationMatch?.[1]?.trim() ?? value;
+	const rawText = (durationMatch?.[1]?.trim() ?? value).trim();
+
+	const inMatch = rawText.match(/\b(?:refreshes|resets|renews|in)\s+in\s+([^\r\n]+)/i);
+	if (inMatch) return inMatch[1].trim();
+
+	const durationOnlyMatch = rawText.match(/(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i);
+	if (durationOnlyMatch && durationOnlyMatch[0].trim() && durationOnlyMatch[0].trim() === rawText) {
+		return durationOnlyMatch[0].trim();
+	}
+
+	if (/quota\s+available/i.test(rawText)) {
+		return 'Available';
+	}
+
+	return rawText;
 }
 
 function cleanResetText(value: string) {
@@ -939,6 +973,14 @@ function monthIndex(month: string) {
 		'dec'
 	].indexOf(month.slice(0, 3).toLowerCase());
 	return index >= 0 ? index : null;
+}
+
+function parseGeminiModelPercent(percent: number, afterPercent: string) {
+	const text = afterPercent.toLowerCase();
+	if (/\bused\b/i.test(text)) {
+		return clampPercent(percent) ?? 0;
+	}
+	return clampPercent(100 - percent) ?? 0;
 }
 
 function clampPercent(value: number) {
