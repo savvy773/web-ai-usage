@@ -343,6 +343,10 @@ function mergeGeminiModelUsages(usages: ModelUsage[]) {
 	const byLabel = new Map<string, ModelUsage>();
 	const allowedModels = [
 		'gemini 3.5 flash (high)',
+		'gemini 3.5 flash (medium)',
+		'gemini 3.5 flash (low)',
+		'gemini 3.1 pro (high)',
+		'gemini 3.1 pro (low)',
 		'claude sonnet 4.6 (thinking)',
 		'claude opus 4.6 (thinking)',
 		'gpt-oss 120b (medium)'
@@ -350,6 +354,10 @@ function mergeGeminiModelUsages(usages: ModelUsage[]) {
 	// Short display labels for each whitelisted model
 	const shortLabels: Record<string, string> = {
 		'gemini 3.5 flash (high)': 'Flash 3.5 (High)',
+		'gemini 3.5 flash (medium)': 'Flash 3.5 (Medium)',
+		'gemini 3.5 flash (low)': 'Flash 3.5 (Low)',
+		'gemini 3.1 pro (high)': 'Pro 3.1 (High)',
+		'gemini 3.1 pro (low)': 'Pro 3.1 (Low)',
 		'claude sonnet 4.6 (thinking)': 'Sonnet 4.6',
 		'claude opus 4.6 (thinking)': 'Opus 4.6',
 		'gpt-oss 120b (medium)': 'GPT-OSS 120B'
