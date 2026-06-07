@@ -2,15 +2,9 @@ import { collectAllUsage } from './collector';
 import { readUsagePayload, recordUsageSnapshot } from './storage';
 import type { UsagePayload, UsageRefreshState } from '$lib/usage';
 
-const PREFETCH_LEAD_MS = 30_000;
 const QUICK_REFRESH_WAIT_MS = 2_000;
-// Delay the first scheduled refresh after a cold server start so node-pty and
-// the CLI subprocesses have time to settle before PTY sessions are opened.
-const STARTUP_WARMUP_MS = 10_000;
-const serverStartedAt = Date.now();
 
 let activeRefresh: Promise<UsagePayload> | null = null;
-let scheduledPrefetch: NodeJS.Timeout | null = null;
 let lastStatuses: string | null = null;
 let refreshState: UsageRefreshState = {
 	refreshing: false,
@@ -20,9 +14,7 @@ let refreshState: UsageRefreshState = {
 };
 
 export async function readManagedUsagePayload() {
-	const payload = attachRefreshState(await readUsagePayload());
-	schedulePrefetch(payload);
-	return payload;
+	return attachRefreshState(await readUsagePayload());
 }
 
 export async function refreshUsagePayload() {
@@ -30,7 +22,6 @@ export async function refreshUsagePayload() {
 	const quickPayload = await Promise.race([refresh, delay(QUICK_REFRESH_WAIT_MS).then(() => null)]);
 
 	if (quickPayload) {
-		schedulePrefetch(quickPayload);
 		return { payload: attachRefreshState(quickPayload), pending: false };
 	}
 
@@ -40,11 +31,6 @@ export async function refreshUsagePayload() {
 
 function startRefresh() {
 	if (activeRefresh) return activeRefresh;
-
-	if (scheduledPrefetch) {
-		clearTimeout(scheduledPrefetch);
-		scheduledPrefetch = null;
-	}
 
 	refreshState = {
 		refreshing: true,
@@ -102,34 +88,9 @@ function startRefresh() {
 		})
 		.finally(() => {
 			activeRefresh = null;
-			void readUsagePayload()
-				.then(schedulePrefetch)
-				.catch(() => undefined);
 		});
 
 	return activeRefresh;
-}
-
-function startupWarmupMs() {
-	return Math.max(0, STARTUP_WARMUP_MS - (Date.now() - serverStartedAt));
-}
-
-function schedulePrefetch(payload: UsagePayload) {
-	if (activeRefresh || scheduledPrefetch) return;
-
-	const nextRefreshAt = Date.parse(payload.nextRefreshAt);
-	if (!Number.isFinite(nextRefreshAt)) return;
-
-	const scheduleDelayMs = Math.max(0, nextRefreshAt - Date.now() - PREFETCH_LEAD_MS);
-	const delayMs = Math.max(scheduleDelayMs, startupWarmupMs());
-	scheduledPrefetch = setTimeout(() => {
-		scheduledPrefetch = null;
-		void startRefresh();
-	}, delayMs);
-
-	if (typeof scheduledPrefetch.unref === 'function') {
-		scheduledPrefetch.unref();
-	}
 }
 
 function attachRefreshState(payload: UsagePayload): UsagePayload {
