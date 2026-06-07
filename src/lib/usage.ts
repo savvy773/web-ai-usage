@@ -115,6 +115,8 @@ export const CLI_COLLECTION_CONFIG = {
 			'-NoLogo',
 			'-NoProfile',
 			'-NoExit',
+			'-WindowStyle',
+			'Hidden',
 			'-Command',
 			'try { Set-PSReadLineOption -PredictionSource None -ErrorAction SilentlyContinue } catch {}'
 		]
