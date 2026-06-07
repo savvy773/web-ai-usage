@@ -44,7 +44,7 @@
 
 ---
 
-A **SvelteKit server** spawns each CLI in a virtual terminal via **node-pty**, captures the output, parses usage data, and stores results locally. The browser renders from cached JSON on first paint — no API keys, no accounts, no data leaving your machine.
+A **SvelteKit server** spawns each CLI in a virtual terminal via **node-pty**, captures the output, parses usage data, and stores results locally. Manual refreshes and foreground auto-refreshes can collect live data; background or stale-page auto-refreshes return cached data so no hidden CLI window steals focus. The browser renders from cached JSON on first paint — no API keys, no accounts, no data leaving your machine.
 
 <br />
 
@@ -69,6 +69,7 @@ flowchart LR
 |     | Feature              | Description                                                                                 |
 | :-: | :------------------- | :------------------------------------------------------------------------------------------ |
 | ⚡  | **Multi-provider**   | Runs Claude `/usage` · Codex `/status` · Antigravity `/usage` in virtual terminals          |
+| ⏱️  | **Auto interval**    | Choose 1, 3, 5, or 10 minutes; 5 minutes is the default                                     |
 |  ↻  | **Smart retry**      | Up to 5 attempts with phase diagnostics and repeated slash-command confirmation             |
 | 📊  | **Weekly Pace card** | Usage bar vs. 20 % minimum threshold — see if you're on track                               |
 |  ⏱  | **Reset countdown**  | Live per-provider countdown to next usage reset                                             |
@@ -91,7 +92,7 @@ irm https://antigravity.google/cli/install.ps1 | iex  # Antigravity
 
 ### Step 2 — Pre-authenticate each CLI
 
-> **This step is required.** The collector launches CLIs silently and sends a slash command — any first-run wizard, login prompt, or trust dialog will cause a timeout and no data will be collected.
+> **This step is required.** Manual refresh and foreground auto-refresh launch CLIs silently and send a slash command — any first-run wizard, login prompt, or trust dialog will cause a timeout and no data will be collected.
 
 Run each CLI **once** in the directory you plan to use as your working directory, complete the full auth flow, then exit:
 
@@ -204,15 +205,23 @@ Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` 
 
 <br />
 
+## 🔄 Auto Refresh
+
+Auto refresh defaults to **5 minutes**. Use the interval control in the dashboard to choose **1, 3, 5, or 10 minutes**.
+
+Only an active foreground page starts a live collection. If the tab is hidden, blurred, or stale, the refresh API returns cached data and defers the next check instead of launching provider CLIs. Manual **Refresh** still starts a live collection on demand.
+
+<br />
+
 ## 🖥 CLI Targets
 
-| Provider        | Command                              | Slash     | Shows                          |
-| :-------------- | :----------------------------------- | :-------- | :----------------------------- |
-| Claude          | `claude`                             | `/usage`  | current session + weekly usage |
-| Codex           | `codex`                              | `/status` | 5h limit + weekly limit        |
-| Antigravity CLI | `agy --dangerously-skip-permissions` | `/usage`  | per-model usage + resets       |
+| Provider        | Command  | Slash     | Shows                          |
+| :-------------- | :------- | :-------- | :----------------------------- |
+| Claude          | `claude` | `/usage`  | current session + weekly usage |
+| Codex           | `codex`  | `/status` | 5h limit + weekly limit        |
+| Antigravity CLI | `agy`    | `/usage`  | per-model usage + resets       |
 
-> `--dangerously-skip-permissions` bypasses Antigravity's workspace prompt. Claude and Codex don't use equivalent flags — they affect auth policy and break collection.
+> Antigravity `/usage` works with plain `agy`; no dashboard-specific skip-permissions flag is required.
 
 <br />
 
