@@ -17,13 +17,7 @@
 		message: string;
 		timestamp: string;
 	}
-	import type {
-		ModelUsage,
-		ProviderUsage,
-		UsagePayload,
-		UsageWindow,
-		UsageWindowId
-	} from '$lib/usage';
+	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
 	import type { PageData } from './$types';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
@@ -400,52 +394,6 @@
 		return `${Math.max(0, Math.min(100, value ?? 0))}%`;
 	}
 
-	type ModelGroup = {
-		labels: string[];
-		percent: number | null;
-		remainingText: string | null;
-		resetAt: string | null;
-	};
-
-	function groupModelUsages(models: ModelUsage[]): ModelGroup[] {
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const groups = new Map<string, ModelGroup>();
-		for (const m of models) {
-			if (m.label === 'GPT-OSS 120B') continue;
-
-			const isGemini =
-				m.label.toLowerCase().includes('flash') ||
-				m.label.toLowerCase().includes('gemini') ||
-				m.label.toLowerCase().includes('pro');
-			const typeKey = isGemini ? 'gemini' : 'other';
-			const key = `${typeKey}|${m.percent ?? 'null'}|${m.remainingText ?? m.resetAt ?? 'none'}`;
-
-			const existing = groups.get(key);
-			if (existing) {
-				existing.labels.push(m.label);
-			} else {
-				groups.set(key, {
-					labels: [m.label],
-					percent: m.percent,
-					remainingText: m.remainingText,
-					resetAt: m.resetAt
-				});
-			}
-		}
-		const result = [...groups.values()];
-		for (const group of result) {
-			const hasGemini = group.labels.some(
-				(label) => label.toLowerCase().includes('flash') || label.toLowerCase().includes('gemini')
-			);
-			if (hasGemini) {
-				group.labels = ['Gemini'];
-			} else {
-				group.labels = ['Other Models'];
-			}
-		}
-		return result;
-	}
-
 	function formatAmount(value: number | null) {
 		if (value === null) return 'Unknown';
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -799,7 +747,7 @@
 							type="button"
 							role="switch"
 							aria-checked={autoRefresh}
-							class={`flex cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-2.5 transition-colors duration-150 ${autoRefresh ? 'bg-cyan-500/12' : 'hover:bg-white/5'}`}
+							class={`flex w-20 cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-2.5 transition-colors duration-150 ${autoRefresh ? 'bg-cyan-500/12' : 'hover:bg-white/5'}`}
 							onclick={() => {
 								autoRefresh = !autoRefresh;
 							}}
@@ -826,7 +774,7 @@
 
 						<button
 							type="button"
-							class="flex cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-2.5 transition-colors duration-150 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+							class="flex w-24 cursor-pointer flex-col items-center justify-center gap-1.5 px-4 py-2.5 transition-colors duration-150 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50"
 							disabled={refreshLocked}
 							onclick={() => void refreshUsage('manual')}
 						>
@@ -899,12 +847,12 @@
 
 							<div class="flex shrink-0 items-center gap-1.5">
 								<span
-									class={`rounded-md border px-2 py-1 text-xs font-medium ${statusTone(provider)}`}
+									class={`w-24 text-center rounded-md border px-2 py-1 text-xs font-medium ${statusTone(provider)}`}
 								>
 									{statusLabel(provider)}
 								</span>
 								<span
-									class="rounded-md border border-cyan-300/15 bg-cyan-500/10 px-2 py-1 font-mono text-xs text-cyan-200 tabular-nums"
+									class="w-14 text-center rounded-md border border-cyan-300/15 bg-cyan-500/10 px-2 py-1 font-mono text-xs text-cyan-200 tabular-nums"
 								>
 									{formatDuration(provider.collectionDurationMs) ?? '--'}
 								</span>
@@ -930,7 +878,7 @@
 														</div>
 													{/if}
 												</div>
-												<div class="shrink-0 text-right">
+												<div class="w-20 shrink-0 text-right">
 													<div
 														class="text-xl font-bold tracking-tight"
 														style={`color: ${heatColor(usageWindow.percent)}`}
@@ -953,7 +901,7 @@
 													<Clock3 class="size-3" />
 													<span class="font-medium tracking-[0.12em] uppercase">Reset</span>
 												</div>
-												<div class="text-right">
+												<div class="w-28 shrink-0 text-right">
 													<div
 														class="flex items-center justify-end gap-0.5 font-mono text-xs font-semibold text-foreground/85"
 													>
@@ -970,7 +918,7 @@
 
 							{#if (provider.modelUsages ?? []).length > 0}
 								<div class="grid gap-2.5 grid-cols-1">
-									{#each groupModelUsages(provider.modelUsages ?? []) as group (group.labels.join(','))}
+									{#each (provider.modelUsages ?? []).filter((m) => m.label === 'Flash 3.5 (High)' || m.label === 'Sonnet 4.6') as model (model.label)}
 										<div
 											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 backdrop-blur-sm transition-all duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
 										>
@@ -978,17 +926,17 @@
 												<div class="min-w-0">
 													<div
 														class="text-[13px] font-semibold text-foreground/95 leading-snug"
-														title={group.labels.join(' · ')}
+														title={model.label}
 													>
-														{group.labels.join(' · ')}
+														{model.label}
 													</div>
 												</div>
-												<div class="shrink-0 text-right">
+												<div class="w-20 shrink-0 text-right">
 													<div
 														class="text-xl font-bold tracking-tight"
-														style={`color: ${heatColor(group.percent)}`}
+														style={`color: ${heatColor(model.percent)}`}
 													>
-														{percentLabel(group.percent)}
+														{percentLabel(model.percent)}
 													</div>
 												</div>
 											</div>
@@ -997,7 +945,7 @@
 												<div class="absolute top-0 left-[80%] z-10 h-full w-px bg-slate-800"></div>
 												<div
 													class="h-full rounded-full transition-all"
-													style={`width: ${barWidth(group.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(group.percent)});`}
+													style={`width: ${barWidth(model.percent)}; background: linear-gradient(90deg, #06b6d4, ${heatColor(model.percent)});`}
 												></div>
 											</div>
 
@@ -1006,11 +954,11 @@
 													<Clock3 class="size-3" />
 													<span class="font-medium tracking-[0.12em] uppercase">Reset</span>
 												</div>
-												<div class="text-right">
+												<div class="w-28 shrink-0 text-right">
 													<div
 														class="flex items-center justify-end gap-0.5 font-mono text-xs font-semibold text-foreground/85"
 													>
-														{#each resetPartsFromText(countdownText(group.resetAt, group.remainingText)) as part (`${group.labels[0]}-sub-${part.unit || part.value}`)}
+														{#each resetPartsFromText(countdownText(model.resetAt, model.remainingText)) as part (`${model.label}-sub-${part.unit || part.value}`)}
 															<span class={part.tone}>{part.value}{part.unit}</span>
 														{/each}
 													</div>
