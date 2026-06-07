@@ -144,7 +144,7 @@ export const PROVIDERS = [
 	{
 		id: 'gemini',
 		name: 'Antigravity',
-		command: 'agy --dangerously-skip-permissions',
+		command: 'agy',
 		slashCommand: '/usage',
 		usageUrl: null
 	}

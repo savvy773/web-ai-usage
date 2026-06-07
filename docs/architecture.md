@@ -10,11 +10,11 @@ This document is the short implementation reference. Use `fix_check.md` when a r
 
 AI Usage Dashboard is a local SvelteKit app that reads usage from three CLI tools:
 
-| Provider        | Command                              | Usage command | Dashboard view           |
-| --------------- | ------------------------------------ | ------------- | ------------------------ |
-| Claude          | `claude`                             | `/usage`      | current session and week |
-| Codex           | `codex`                              | `/status`     | 5h and weekly limits     |
-| Antigravity CLI | `agy --dangerously-skip-permissions` | `/usage`      | per-model usage          |
+| Provider        | Command  | Usage command | Dashboard view           |
+| --------------- | -------- | ------------- | ------------------------ |
+| Claude          | `claude` | `/usage`      | current session and week |
+| Codex           | `codex`  | `/status`     | 5h and weekly limits     |
+| Antigravity CLI | `agy`    | `/usage`      | per-model usage          |
 
 The browser never runs CLIs. It reads JSON from the SvelteKit server. The server owns CLI execution, parsing, retries, history, and debug files.
 
@@ -24,11 +24,12 @@ The browser never runs CLIs. It reads JSON from the SvelteKit server. The server
 browser
   -> GET /api/usage
   -> render cached JSON
-  -> POST /api/usage/refresh when refresh is needed
+  -> POST /api/usage/refresh when manual refresh is requested
+  -> POST /api/usage/refresh for auto-refresh only while the page is visible and focused
   -> poll GET /api/usage while refreshState.refreshing is true
 
 server refresh
-  -> run provider CLI in node-pty
+  -> run provider CLIs in parallel node-pty sessions
   -> send slash command after CLI readiness
   -> capture raw terminal output
   -> normalize ANSI/control/redraw text
@@ -45,7 +46,7 @@ If a refresh takes longer than the short wait window, the API returns the last u
 | `src/routes/+page.svelte`                 | Dashboard UI, refresh controls, logs, stop button |
 | `src/routes/+page.server.ts`              | SSR preload for first paint                       |
 | `src/routes/api/usage/+server.ts`         | Reads stored usage payload                        |
-| `src/routes/api/usage/refresh/+server.ts` | Starts or joins a refresh                         |
+| `src/routes/api/usage/refresh/+server.ts` | Gates auto/manual refresh and starts collection   |
 | `src/routes/api/server/logs/+server.ts`   | Streams server logs over SSE                      |
 | `src/routes/api/server/stop/+server.ts`   | Stops the current server process                  |
 | `src/lib/server/usage/refresh-manager.ts` | Refresh locking, cached response, history write   |
@@ -79,16 +80,20 @@ Preview mode does not hot-reload server code reliably. Restart with the script b
 
 ## Refresh Rules
 
-Provider collection is sequential. Each provider can retry up to 5 times. A failed provider does not stop the next provider.
+Provider collection runs in parallel. Each provider can retry up to 5 times. A failed provider does not stop the other providers, and each completed provider snapshot is recorded before the slowest provider finishes.
+
+Auto-refresh is a browser-side schedule, not a server-side prefetch. The dashboard defaults to a 5-minute auto interval and supports 1, 3, 5, and 10 minutes from the top control. Auto collection is allowed only when the dashboard page is visible and focused; background or stale-tab auto requests return cached data and defer the next check without opening provider CLIs. Manual refresh always uses the interactive collector.
 
 Key timings:
 
 | Setting                 | Value                                                                                  |
 | ----------------------- | -------------------------------------------------------------------------------------- |
 | CLI working directories | shared env, workspace `..\..\_temp`, `%TEMP%`, `%TMP%`, optional provider-specific env |
-| shell                   | `pwsh.exe -NoLogo -NoProfile -NoExit`                                                  |
+| shell                   | `pwsh.exe -NoLogo -NoProfile -NoExit -WindowStyle Hidden`                              |
+| collector backend       | node-pty winpty by default; ConPTY only with `AI_USAGE_USE_CONPTY=1`                   |
+| auto interval           | `1m`, `3m`, `5m` default, or `10m`; stored in browser localStorage                     |
 | retry delays            | `1.5s`, `5s`, `5s`, `10s`                                                              |
-| history bucket          | `10 minutes`                                                                           |
+| history bucket          | `10 minutes` for stored history grouping                                               |
 | quick refresh wait      | about `2s`                                                                             |
 | manual refresh cooldown | `10s`                                                                                  |
 | frontend polling        | until refresh finishes or polling attempts expire                                      |
@@ -164,7 +169,10 @@ If a new refresh is weaker than the latest usable history, storage keeps the usa
 
 `POST /api/usage/refresh`
 
-- Starts collection or joins the active collection.
+- Starts collection or joins the active collection only for manual refresh, or foreground auto-refresh with the page-active header.
+- Headerless, stale-tab, and background auto-refresh requests return cached data and do not open provider CLIs.
+- Foreground auto-refresh sends `x-ai-usage-refresh-mode: auto`, `x-ai-usage-page-active: 1`, and `x-ai-usage-auto-interval-ms`.
+- Manual refresh sends `x-ai-usage-refresh-mode: manual`.
 - Send JSON `{}` with same-origin headers during manual testing:
 
 ```powershell
@@ -172,7 +180,10 @@ Invoke-RestMethod `
   -Method Post `
   -Uri 'http://127.0.0.1:5173/api/usage/refresh' `
   -ContentType 'application/json' `
-  -Headers @{ Origin = 'http://127.0.0.1:5173' } `
+  -Headers @{
+    Origin = 'http://127.0.0.1:5173'
+    'x-ai-usage-refresh-mode' = 'manual'
+  } `
   -Body '{}'
 ```
 

@@ -23,12 +23,20 @@
 	const AUTO_REFRESH_SETTLE_MS = 1000;
 	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 	const USAGE_CACHE_KEY = 'ai-usage-payload-cache';
+	const AUTO_REFRESH_INTERVAL_KEY = 'ai-usage-auto-refresh-interval-ms';
 	const USAGE_REQUEST_TIMEOUT_MS = 10_000;
 	const USAGE_REQUEST_RETRIES = 2;
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 40;
 	const STARTUP_AUTO_REFRESH_GRACE_MS = 120_000;
+	const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+	const AUTO_REFRESH_INTERVAL_OPTIONS = [
+		{ label: '1m', value: 1 * 60 * 1000 },
+		{ label: '3m', value: 3 * 60 * 1000 },
+		{ label: '5m', value: 5 * 60 * 1000 },
+		{ label: '10m', value: 10 * 60 * 1000 }
+	] as const;
 	const WINDOW_ORDER: UsageWindowId[] = ['fiveHour', 'week'];
 	const DAY_MS = 24 * 60 * 60 * 1000;
 	const MIN_WEEKLY_PACE_TARGET = 20;
@@ -54,6 +62,7 @@
 	let error = $state<string | null>(null);
 	let now = $state(new Date());
 	let autoRefresh = $state(true);
+	let autoRefreshIntervalMs = $state(DEFAULT_AUTO_REFRESH_INTERVAL_MS);
 	let refreshCooldownUntil = $state<number | null>(null);
 	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
 	let stopping = $state(false);
@@ -72,17 +81,19 @@
 
 	const providers = $derived(payload?.providers ?? []);
 	const working = $derived(loading || refreshing);
-	const nextRefreshCountdown = $derived(formatRefreshCountdown(payload?.nextRefreshAt ?? null));
+	const nextAutoRefreshAt = $derived(autoRefreshAt(payload, autoRefreshIntervalMs));
+	const nextRefreshCountdown = $derived(formatRefreshCountdown(nextAutoRefreshAt));
 	const refreshCooldownCountdown = $derived(formatCountdown(refreshCooldownUntil));
 	const refreshLocked = $derived(working || isRefreshCoolingDown(refreshCooldownUntil));
 	let initialRefreshStarted = false;
+	let pageIsActive = $state(true);
 
 	$effect(() => {
-		if (!autoRefresh || refreshing || refreshLocked || !payload?.nextRefreshAt) {
+		if (!autoRefresh || !pageIsActive || refreshing || refreshLocked || !nextAutoRefreshAt) {
 			return;
 		}
 
-		const parsedRefreshTime = Date.parse(payload.nextRefreshAt);
+		const parsedRefreshTime = Date.parse(nextAutoRefreshAt);
 		if (Number.isNaN(parsedRefreshTime)) return;
 
 		const delay = Math.max(0, parsedRefreshTime - Date.now() + AUTO_REFRESH_SETTLE_MS);
@@ -95,6 +106,14 @@
 
 	onMount(() => {
 		restoreRefreshCooldown();
+		restoreAutoRefreshInterval();
+		pageIsActive = isPageActive();
+		const updatePageActivity = () => {
+			pageIsActive = isPageActive();
+		};
+		document.addEventListener('visibilitychange', updatePageActivity);
+		window.addEventListener('focus', updatePageActivity);
+		window.addEventListener('blur', updatePageActivity);
 		const pageWasReloaded = isPageReload();
 		const cachedPayload = readCachedPayload();
 		if (payload) {
@@ -125,6 +144,9 @@
 
 		return () => {
 			window.clearInterval(clockTimer);
+			document.removeEventListener('visibilitychange', updatePageActivity);
+			window.removeEventListener('focus', updatePageActivity);
+			window.removeEventListener('blur', updatePageActivity);
 			es.close();
 		};
 	});
@@ -159,6 +181,10 @@
 		options: { force?: boolean } = {}
 	) {
 		const isAuto = mode === 'auto';
+		if (isAuto && !isPageActive()) {
+			pageIsActive = false;
+			return;
+		}
 		if (refreshing || (!options.force && isRefreshCoolingDown(refreshCooldownUntil))) {
 			return;
 		}
@@ -172,7 +198,7 @@
 		try {
 			const { payload: refreshedPayload, status } = await fetchUsageResponse('/api/usage/refresh', {
 				method: 'POST',
-				headers: { 'x-ai-usage-refresh-mode': mode },
+				headers: refreshHeaders(mode),
 				timeoutMs: REFRESH_REQUEST_TIMEOUT_MS,
 				retries: 0,
 				errorPrefix: 'Refresh failed'
@@ -223,6 +249,21 @@
 		window.setTimeout(() => void refreshUsage(mode, options), delayMs);
 	}
 
+	function refreshHeaders(mode: 'manual' | 'auto') {
+		const headers: Record<string, string> = { 'x-ai-usage-refresh-mode': mode };
+		if (mode === 'auto') {
+			headers['x-ai-usage-auto-interval-ms'] = String(autoRefreshIntervalMs);
+		}
+		if (mode === 'auto' && isPageActive()) {
+			headers['x-ai-usage-page-active'] = '1';
+		}
+		return headers;
+	}
+
+	function isPageActive() {
+		return document.visibilityState === 'visible' && document.hasFocus();
+	}
+
 	function cachePayload(nextPayload: UsagePayload) {
 		try {
 			localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(nextPayload));
@@ -246,8 +287,15 @@
 		if (!nextPayload) return true;
 		if (!latestCollectedAt(nextPayload)) return true;
 
-		const nextRefreshAt = Date.parse(nextPayload.nextRefreshAt);
+		const nextRefreshAt = Date.parse(autoRefreshAt(nextPayload, autoRefreshIntervalMs) ?? '');
 		return Number.isFinite(nextRefreshAt) && nextRefreshAt <= Date.now();
+	}
+
+	function autoRefreshAt(nextPayload: UsagePayload | null, intervalMs: number) {
+		if (!nextPayload) return null;
+		const baseTime = Date.parse(latestCollectedAt(nextPayload) ?? nextPayload.generatedAt);
+		if (!Number.isFinite(baseTime)) return nextPayload.nextRefreshAt;
+		return new Date(baseTime + intervalMs).toISOString();
 	}
 
 	function hasUsablePayload(nextPayload: UsagePayload | null) {
@@ -684,6 +732,13 @@
 		localStorage.setItem('usage-refresh-cooldown-until', String(timestamp));
 	}
 
+	function setAutoRefreshInterval(value: number) {
+		const allowed = AUTO_REFRESH_INTERVAL_OPTIONS.some((option) => option.value === value);
+		if (!allowed) return;
+		autoRefreshIntervalMs = value;
+		localStorage.setItem(AUTO_REFRESH_INTERVAL_KEY, String(value));
+	}
+
 	function restoreRefreshCooldown() {
 		const stored = localStorage.getItem('usage-refresh-cooldown-until');
 		if (!stored) return;
@@ -693,6 +748,13 @@
 			refreshCooldownUntil = parsed;
 		} else {
 			localStorage.removeItem('usage-refresh-cooldown-until');
+		}
+	}
+
+	function restoreAutoRefreshInterval() {
+		const stored = Number(localStorage.getItem(AUTO_REFRESH_INTERVAL_KEY));
+		if (AUTO_REFRESH_INTERVAL_OPTIONS.some((option) => option.value === stored)) {
+			autoRefreshIntervalMs = stored;
 		}
 	}
 
@@ -774,6 +836,22 @@
 								{refreshing && refreshMode === 'auto' ? '···' : nextRefreshCountdown}
 							</span>
 						</button>
+
+						<div class="my-2 w-px bg-slate-700/70"></div>
+
+						<div class="flex w-16 items-center justify-center px-2">
+							<select
+								aria-label="Auto refresh interval"
+								title="Auto refresh interval"
+								class="h-8 w-full cursor-pointer rounded-md border border-slate-700/70 bg-slate-950/70 px-1.5 text-center font-mono text-[11px] font-semibold text-cyan-100 outline-none transition-colors hover:border-cyan-500/40 focus:border-cyan-400/70"
+								value={autoRefreshIntervalMs}
+								onchange={(event) => setAutoRefreshInterval(Number(event.currentTarget.value))}
+							>
+								{#each AUTO_REFRESH_INTERVAL_OPTIONS as option}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						</div>
 
 						<div class="my-2 w-px bg-slate-700/70"></div>
 

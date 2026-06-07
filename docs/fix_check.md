@@ -66,7 +66,7 @@ After a successful live refresh, do not treat older `partial` lines as current f
 - During refresh, providers are collected independently and each completed provider snapshot is recorded before the slowest provider finishes.
 - If served JSON says `Previous data kept`, inspect the raw snapshot for the latest failure, but the browser should still show the previous usable values.
 - On a cold PC boot, the browser may open before the preview server and CLIs are fully warm. The page should keep the cached/previous usable values, show `Cached` instead of `Unavailable`, and delay its startup auto-refresh briefly before trying the CLIs.
-- The server should not start scheduled CLI prefetches by itself. Browser auto-refresh and manual refresh both send an explicit refresh-mode header; stale-tab or headerless refresh requests should return cached data without opening provider CLIs.
+- The server should not start scheduled CLI prefetches by itself. Browser auto-refresh defaults to 5 minutes and can be set to 1, 3, 5, or 10 minutes from the top control. Auto-refresh may start provider CLI collection only when the dashboard page is visible and focused and sends the page-active header. Background tabs, stale tabs, and headerless refresh requests must return cached data without opening provider CLIs.
 - If the latest `data\usage-latest.json` has all providers `ok`, watch the next scheduled refresh before changing code.
 
 For follow-up monitoring, check only lines after the latest successful `generatedAt` time unless the user is asking about an older incident.
@@ -84,7 +84,7 @@ Escalate to parser investigation only when the raw or latest parsed snapshot cle
 
 `DEP0205` / `module.register()` warnings are non-blocking Vite/SvelteKit/Node deprecation warnings unless they are paired with request failures or server startup errors. They are filtered from the dashboard log; track them as dependency maintenance, not as usage parsing failures.
 
-Windows `node-pty` assertion dialogs are native process failures, so the browser cannot catch the dialog after it is created. The collector uses winpty by default to avoid foreground ConPTY/OpenConsole flashes while keeping interactive CLI output reliable. Only set `AI_USAGE_USE_PIPE=1`, `AI_USAGE_USE_CONPTY=1`, or `AI_USAGE_USE_CONPTY_DLL=1` temporarily when investigating collection behavior.
+Windows `node-pty` assertion dialogs are native process failures, so the browser cannot catch the dialog after it is created. Background automatic refresh must not enter the node-pty collector because even winpty can create a `conhost.exe` that briefly steals focus. Foreground auto-refresh and manual refresh use winpty by default to avoid foreground ConPTY/OpenConsole flashes while keeping interactive CLI output reliable. Only set `AI_USAGE_USE_PIPE=1`, `AI_USAGE_USE_CONPTY=1`, or `AI_USAGE_USE_CONPTY_DLL=1` temporarily when investigating collection behavior.
 
 ## Flicker Narrowing
 
@@ -130,7 +130,7 @@ Interpretation:
 - `winpty-agent.exe` without `OpenConsole.exe` is expected for node-pty winpty collection and should not be treated as a visible terminal by itself.
 - `conhost.exe` can exist for hidden console hosts; check its parent before assuming it is user-visible.
 - A command line such as `D:\Code\_scripts\clean-user.ps1`, VS Code PowerShell services, or manually opened `claude` / `codex` / `agy` terminals points outside the dashboard collector.
-- Headerless or stale-tab `POST /api/usage/refresh` should return cached data only. Browser auto-refresh and manual refresh must include `x-ai-usage-refresh-mode`.
+- Headerless, stale-tab, or background browser auto-refresh `POST /api/usage/refresh` should return cached data only. Foreground auto-refresh must include `x-ai-usage-refresh-mode: auto`, `x-ai-usage-page-active: 1`, and an allowed `x-ai-usage-auto-interval-ms` value. Manual refresh must include `x-ai-usage-refresh-mode: manual`.
 
 ## Phase Meanings
 
@@ -173,21 +173,21 @@ Antigravity:
 
 ## Common Symptoms
 
-| Symptom                                            | Likely cause                                                     | Fix direction                                                                  |
-| -------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `Cross-site POST form submissions are forbidden`   | Missing JSON body or Origin header                               | Send `{}` with `Origin: http://127.0.0.1:5173`                                 |
-| Source changes seem ignored                        | Preview server was not restarted                                 | Run `.\scripts\start-server.ps1` again                                         |
-| All providers become partial in one bucket         | CLI startup/auth timing or `node-pty` path issue                 | Inspect latest and last-failure raw snapshots                                  |
-| Latest UI still shows usable values after partial  | Storage carried forward previous usable snapshot                 | Check provider status/message for latest failure                               |
-| Cold boot shows Claude `Unavailable` / `Unknown`   | Startup refresh ran before Claude accepted `/usage`              | Keep previous usable history and delay startup auto-refresh                    |
-| Terminal window briefly steals focus on a timer    | ConPTY/OpenConsole or stale-tab collection started provider CLIs | Use winpty by default; require a refresh-mode header before the API opens CLIs |
-| Antigravity has status rows but no models          | `/usage` panel was not opened or not settled                     | Check slash buffer, auth wait, and reissue guard                               |
-| Codex shows `Unknown` or `100%`                    | Parser read a status line instead of limit rows                  | Narrow Codex parser to limit rows                                              |
-| Visual C++ assertion dialog mentions `conpty.node` | Bundled ConPTY DLL or PTY cleanup path crashed                   | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server                           |
-| `collector.log` looks quiet during success         | Successful raw snapshots are the stronger evidence               | Check `data\raw\*-latest.parsed.json`                                          |
-| Tracked process shows `Recognized: False`          | Date format mismatch during JSON serialization                   | Fixed by comparing process creation dates with 2s margin                       |
-| `AttachConsole failed` in startup log              | node-pty / Windows console API compatibility issue               | Non-blocking warning unless Vite server fails to start                         |
-| `Cannot find name 'ModelUsage'` on build           | Missing export/import of ModelUsage type in UI                   | Fixed by importing ModelUsage from `$lib/usage`                                |
+| Symptom                                            | Likely cause                                                     | Fix direction                                                                                |
+| -------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Cross-site POST form submissions are forbidden`   | Missing JSON body or Origin header                               | Send `{}` with `Origin: http://127.0.0.1:5173`                                               |
+| Source changes seem ignored                        | Preview server was not restarted                                 | Run `.\scripts\start-server.ps1` again                                                       |
+| All providers become partial in one bucket         | CLI startup/auth timing or `node-pty` path issue                 | Inspect latest and last-failure raw snapshots                                                |
+| Latest UI still shows usable values after partial  | Storage carried forward previous usable snapshot                 | Check provider status/message for latest failure                                             |
+| Cold boot shows Claude `Unavailable` / `Unknown`   | Startup refresh ran before Claude accepted `/usage`              | Keep previous usable history and delay startup auto-refresh                                  |
+| Terminal window briefly steals focus on a timer    | Background automatic refresh entered PTY/provider CLI collection | Require visible/focused page-active header for auto collection; otherwise return cached data |
+| Antigravity has status rows but no models          | `/usage` panel was not opened or not settled                     | Check slash buffer, auth wait, and reissue guard                                             |
+| Codex shows `Unknown` or `100%`                    | Parser read a status line instead of limit rows                  | Narrow Codex parser to limit rows                                                            |
+| Visual C++ assertion dialog mentions `conpty.node` | Bundled ConPTY DLL or PTY cleanup path crashed                   | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server                                         |
+| `collector.log` looks quiet during success         | Successful raw snapshots are the stronger evidence               | Check `data\raw\*-latest.parsed.json`                                                        |
+| Tracked process shows `Recognized: False`          | Date format mismatch during JSON serialization                   | Fixed by comparing process creation dates with 2s margin                                     |
+| `AttachConsole failed` in startup log              | node-pty / Windows console API compatibility issue               | Non-blocking warning unless Vite server fails to start                                       |
+| `Cannot find name 'ModelUsage'` on build           | Missing export/import of ModelUsage type in UI                   | Fixed by importing ModelUsage from `$lib/usage`                                              |
 
 ## When To Change Code
 
