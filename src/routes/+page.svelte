@@ -78,7 +78,9 @@
 	let initialRefreshStarted = false;
 
 	$effect(() => {
-		if (!autoRefresh || refreshing || refreshLocked || !payload?.nextRefreshAt) return;
+		if (!autoRefresh || refreshing || refreshLocked || !payload?.nextRefreshAt) {
+			return;
+		}
 
 		const parsedRefreshTime = Date.parse(payload.nextRefreshAt);
 		if (Number.isNaN(parsedRefreshTime)) return;
@@ -157,7 +159,7 @@
 		options: { force?: boolean } = {}
 	) {
 		const isAuto = mode === 'auto';
-		if (refreshing || (!options.force && !isAuto && isRefreshCoolingDown(refreshCooldownUntil))) {
+		if (refreshing || (!options.force && isRefreshCoolingDown(refreshCooldownUntil))) {
 			return;
 		}
 
@@ -170,6 +172,7 @@
 		try {
 			const { payload: refreshedPayload, status } = await fetchUsageResponse('/api/usage/refresh', {
 				method: 'POST',
+				headers: { 'x-ai-usage-refresh-mode': mode },
 				timeoutMs: REFRESH_REQUEST_TIMEOUT_MS,
 				retries: 0,
 				errorPrefix: 'Refresh failed'
@@ -274,6 +277,7 @@
 		url: string,
 		options: {
 			method?: 'GET' | 'POST';
+			headers?: Record<string, string>;
 			timeoutMs: number;
 			retries: number;
 			errorPrefix: string;
@@ -286,6 +290,7 @@
 			try {
 				const response = await fetch(url, {
 					method: options.method ?? 'GET',
+					headers: options.headers,
 					signal: controller.signal
 				});
 				if (!response.ok) throw new Error(`${options.errorPrefix}: ${response.status}`);
