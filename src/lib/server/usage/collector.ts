@@ -39,6 +39,7 @@ const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
 const CODEX_UPDATE_SKIP_OPTION = '2';
 const TERMINAL_GRACEFUL_CLOSE_MS = 5000;
+const USE_PIPE_COLLECTION = process.env.AI_USAGE_USE_PIPE === '1';
 const GEMINI_BAR_RUN_PATTERN = /[▬━─═╌╍▔▁▂▃▄▅▆▇█▏▎▍▌▋▊▉▐░▒▓■□▱▰▯▮▭]{3,}/;
 const GEMINI_USAGE_ROW_LABEL_PATTERN =
 	/^(?:Gemini|Claude|GPT-OSS|Flash(?:\s+Lite)?|Pro|gemini-[A-Za-z0-9._\-…]+)\b/i;
@@ -181,6 +182,10 @@ async function runSlashCommand(
 	workingDirectory: string
 ) {
 	await ensureWorkingDirectory(workingDirectory);
+	if (USE_PIPE_COLLECTION) {
+		return await runPipeSlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
+	}
+
 	try {
 		return await runPtySlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
 	} catch (error) {
@@ -254,6 +259,7 @@ async function runPtySlashCommand(
 				rows: providerId === 'gemini' ? 64 : 36,
 				cwd: workingDirectory,
 				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
+				useConpty: process.env.AI_USAGE_USE_CONPTY === '1',
 				useConptyDll: process.env.AI_USAGE_USE_CONPTY_DLL === '1'
 			}
 		);
