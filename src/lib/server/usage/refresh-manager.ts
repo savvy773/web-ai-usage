@@ -1,4 +1,4 @@
-import { collectAllUsage } from './collector';
+import { collectAllUsage, type CollectionBackend } from './collector';
 import { readUsagePayload, recordUsageSnapshot } from './storage';
 import type { UsagePayload, UsageRefreshState } from '$lib/usage';
 
@@ -17,8 +17,8 @@ export async function readManagedUsagePayload() {
 	return attachRefreshState(await readUsagePayload());
 }
 
-export async function refreshUsagePayload() {
-	const refresh = startRefresh();
+export async function refreshUsagePayload(options: { backend?: CollectionBackend } = {}) {
+	const refresh = startRefresh(options);
 	const quickPayload = await Promise.race([refresh, delay(QUICK_REFRESH_WAIT_MS).then(() => null)]);
 
 	if (quickPayload) {
@@ -29,7 +29,7 @@ export async function refreshUsagePayload() {
 	return { payload: cachedPayload, pending: true };
 }
 
-function startRefresh() {
+function startRefresh(options: { backend?: CollectionBackend } = {}) {
 	if (activeRefresh) return activeRefresh;
 
 	refreshState = {
@@ -51,7 +51,7 @@ function startRefresh() {
 			});
 	};
 
-	activeRefresh = collectAllUsage(recordProviderResult)
+	activeRefresh = collectAllUsage(recordProviderResult, options)
 		.then((providers) => {
 			const statuses = providers.map((p) => `${p.provider}:${p.status}`).join(' ');
 			return snapshotWrite
