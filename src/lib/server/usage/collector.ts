@@ -16,6 +16,7 @@ import {
 } from '$lib/usage';
 
 type PtyModule = typeof import('node-pty');
+export type CollectionBackend = 'pty' | 'pipe';
 
 const USAGE_OUTPUT_SETTLE_MS = 1200;
 const MAX_CAPTURE_CHARS = 20_000;
@@ -47,18 +48,22 @@ const GEMINI_SLASH_CONFIRM_INTERVAL_MS = 2000;
 const GEMINI_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
 
 export async function collectAllUsage(
-	onProviderResult?: (provider: ProviderUsage) => void | Promise<void>
+	onProviderResult?: (provider: ProviderUsage) => void | Promise<void>,
+	options: { backend?: CollectionBackend } = {}
 ): Promise<ProviderUsage[]> {
 	return await Promise.all(
 		PROVIDERS.map(async (provider) => {
-			const result = await collectProvider(provider.id);
+			const result = await collectProvider(provider.id, options);
 			await onProviderResult?.(result);
 			return result;
 		})
 	);
 }
 
-async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
+async function collectProvider(
+	providerId: ProviderId,
+	options: { backend?: CollectionBackend } = {}
+): Promise<ProviderUsage> {
 	const provider = PROVIDERS.find((item) => item.id === providerId);
 	if (!provider) {
 		throw new Error(`Unknown provider: ${providerId}`);
@@ -81,7 +86,8 @@ async function collectProvider(providerId: ProviderId): Promise<ProviderUsage> {
 				provider.command,
 				provider.slashCommand,
 				attempt,
-				workingDirectory
+				workingDirectory,
+				options
 			);
 			latestResult = parseProviderUsage(provider.id, output);
 		} catch (error) {
@@ -179,10 +185,11 @@ async function runSlashCommand(
 	command: string,
 	slashCommand: string,
 	attempt: number,
-	workingDirectory: string
+	workingDirectory: string,
+	options: { backend?: CollectionBackend } = {}
 ) {
 	await ensureWorkingDirectory(workingDirectory);
-	if (USE_PIPE_COLLECTION) {
+	if (USE_PIPE_COLLECTION || options.backend === 'pipe') {
 		return await runPipeSlashCommand(providerId, command, slashCommand, attempt, workingDirectory);
 	}
 
@@ -255,8 +262,8 @@ async function runPtySlashCommand(
 			[...CLI_COLLECTION_CONFIG.shell.args],
 			{
 				name: 'xterm-256color',
-				cols: providerId === 'gemini' ? 160 : 120,
-				rows: providerId === 'gemini' ? 64 : 36,
+				cols: providerId === 'agy' ? 160 : 120,
+				rows: providerId === 'agy' ? 64 : 36,
 				cwd: workingDirectory,
 				env: { ...process.env, ...CLI_COLLECTION_CONFIG.env },
 				useConpty: process.env.AI_USAGE_USE_CONPTY === '1',
@@ -371,7 +378,7 @@ async function runPtySlashCommand(
 
 				schedule(confirmSlashCommand, 800);
 			}
-			if (providerId === 'gemini') {
+			if (providerId === 'agy') {
 				const startedAt = performance.now();
 				const confirmUntilMs = Math.max(
 					10_000,
@@ -406,7 +413,7 @@ async function runPtySlashCommand(
 				schedule(writeSlashCommandFallback, 1000);
 				return;
 			}
-			if (providerId === 'gemini' && shouldWaitForGeminiReady(output)) {
+			if (providerId === 'agy' && shouldWaitForGeminiReady(output)) {
 				schedule(writeSlashCommandFallback, 1000);
 				return;
 			}
@@ -505,13 +512,10 @@ async function runPtySlashCommand(
 }
 
 function isShellReady(output: string) {
-	// Strip terminal escapes before matching: pwsh renders the prompt followed by a
-	// cursor-move + OSC window-title + show-cursor sequence (`PS …>\x1b[1C\x1b]0;…\x07\x1b[?25h`),
-	// so the bare-text regex never sees `>` at the tail. On a cold boot the whole prompt
-	// arrives in one conpty chunk, so the lucky chunk boundary that masked this never lands
-	// and the command is never written. Stripping makes detection chunk-boundary-independent.
+	// Strip terminal escapes before matching: pwsh/cmd renders the prompt followed by a
+	// cursor-move + OSC window-title + show-cursor sequence.
 	const tail = stripTerminalOutput(output.slice(-2000));
-	return /PS\s+[A-Z]:\\[^>\n]*>\s*$/i.test(tail);
+	return /(?:PS\s+)?[A-Z]:\\[^>\n]*>\s*$/i.test(tail);
 }
 
 function isCliReady(providerId: ProviderId, output: string) {
@@ -523,6 +527,9 @@ function isCliReady(providerId: ProviderId, output: string) {
 	if (providerId === 'codex') {
 		if (hasCodexUpdatePromptText(tail)) return false;
 		return isCodexReadyTail(tail);
+	}
+	if (providerId === 'agy') {
+		return /\? for shortcuts|Antigravity CLI/i.test(tail);
 	}
 	const hasModelPrompt =
 		/(?:gemini|gpt|claude|opus|sonnet|flash|pro|oss|agy)[^\r\n]+ · [A-Z]:\\/i.test(tail);
@@ -581,7 +588,7 @@ function shouldWaitForClaudeReady(output: string) {
 
 function shouldWaitForGeminiReady(output: string) {
 	const tail = stripTerminalOutput(output.slice(-8000));
-	if (isCliReady('gemini', output)) return false;
+	if (isCliReady('agy', output)) return false;
 
 	return /waiting for authentication/i.test(tail);
 }
@@ -600,7 +607,7 @@ function shouldReissueSlashCommand(providerId: ProviderId, output: string, slash
 		);
 	}
 
-	if (providerId === 'gemini') {
+	if (providerId === 'agy') {
 		return !hasGeminiModelScreenText(tail);
 	}
 
@@ -686,7 +693,7 @@ function captureTimeoutMs(providerId: ProviderId, attempt = 1) {
 		] ?? CLI_COLLECTION_CONFIG.captureTimeoutMs;
 
 	if (attempt < 3) return baseTimeoutMs;
-	if (providerId === 'codex' || providerId === 'gemini') return baseTimeoutMs + 30_000;
+	if (providerId === 'codex' || providerId === 'agy') return baseTimeoutMs + 30_000;
 	return baseTimeoutMs + 15_000;
 }
 
@@ -698,13 +705,14 @@ function collectionRetryDelayMs(attempt: number) {
 }
 
 function usageOutputSettleMs(providerId: ProviderId) {
-	if (providerId === 'gemini') return 3000;
+	if (providerId === 'agy') return 3000;
 	return USAGE_OUTPUT_SETTLE_MS;
 }
 
 function slashReadySettleMs(providerId: ProviderId) {
+	if (providerId === 'claude') return 1500;
 	if (providerId === 'codex') return 1000;
-	if (providerId === 'gemini') return 800;
+	if (providerId === 'agy') return 800;
 	return 500;
 }
 
@@ -781,7 +789,7 @@ function hasUsageOutput(providerId: ProviderId, output: string) {
 		);
 	}
 
-	if (providerId === 'gemini') {
+	if (providerId === 'agy') {
 		return (
 			parsed.modelUsages.length >= 1 &&
 			parsed.modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
@@ -867,14 +875,14 @@ function collectionPhase(
 		return 'codex-startup-or-redraw';
 	}
 
-	if (providerId === 'gemini') {
+	if (providerId === 'agy') {
 		if (/waiting for authentication/i.test(output)) return 'gemini-auth-wait';
 		if (markers.includes('model-screen')) return 'gemini-model-screen-incomplete';
 		if (markers.includes('slash-buffer')) return 'gemini-slash-buffer-waiting';
-		if (isCliReady('gemini', output) && markers.includes('quota-percent')) {
+		if (isCliReady('agy', output) && markers.includes('quota-percent')) {
 			return 'gemini-ready-without-model-screen';
 		}
-		if (isCliReady('gemini', output)) return 'gemini-ready-without-model-command';
+		if (isCliReady('agy', output)) return 'gemini-ready-without-model-command';
 		return 'gemini-startup-or-redraw';
 	}
 
@@ -895,7 +903,7 @@ function parseDiagnostics(providerId: ProviderId, markers: string[], result: Pro
 		return missing.length > 0 ? [`parse-failure=missing ${missing.join(',')}`] : [];
 	}
 
-	if (providerId !== 'gemini') return [];
+	if (providerId !== 'agy') return [];
 
 	const parsedLabels = result.modelUsages.map((usage) => usage.label);
 	const detail = [`parsed-models=${result.modelUsages.length}/3`];
@@ -948,7 +956,7 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 		].filter((marker): marker is string => marker !== null);
 	}
 
-	if (providerId === 'gemini') {
+	if (providerId === 'agy') {
 		const usageRows = lines
 			.map((line, index) => ({ raw: line, normalized: normalizedLines[index] }))
 			.filter((line, index) =>
@@ -1033,7 +1041,7 @@ function shouldAdvanceWorkingDirectory(
 		);
 	}
 
-	if (providerId === 'gemini') {
+	if (providerId === 'agy') {
 		return (
 			diagnostics.phase === 'gemini-auth-wait' || diagnostics.phase === 'gemini-startup-or-redraw'
 		);
