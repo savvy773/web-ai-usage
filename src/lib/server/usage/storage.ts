@@ -183,7 +183,17 @@ async function readHistory(): Promise<UsageBucket[]> {
 	try {
 		const content = await readFile(USAGE_HISTORY_PATH, 'utf8');
 		const parsed = JSON.parse(content) as HistoryFile;
-		return Array.isArray(parsed.history) ? parsed.history.map(inflateBucket) : [];
+		if (Array.isArray(parsed.history)) {
+			return parsed.history.map((bucket) => {
+				const providers = bucket.providers as unknown as Record<string, unknown>;
+				if (providers && 'gemini' in providers && !('agy' in providers)) {
+					providers.agy = providers.gemini;
+					delete providers.gemini;
+				}
+				return inflateBucket(bucket);
+			});
+		}
+		return [];
 	} catch (error) {
 		if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
 		return [];
