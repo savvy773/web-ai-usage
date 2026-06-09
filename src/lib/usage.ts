@@ -110,16 +110,8 @@ export const CLI_COLLECTION_CONFIG = {
 		gemini: 105_000
 	},
 	shell: {
-		command: 'pwsh.exe',
-		args: [
-			'-NoLogo',
-			'-NoProfile',
-			'-NoExit',
-			'-WindowStyle',
-			'Hidden',
-			'-Command',
-			'try { Set-PSReadLineOption -PredictionSource None -ErrorAction SilentlyContinue } catch {}'
-		]
+		command: 'cmd.exe',
+		args: ['/q', '/k', 'echo off']
 	},
 	env: {
 		GEMINI_CLI_TRUST_WORKSPACE: 'true'
@@ -142,7 +134,7 @@ export const PROVIDERS = [
 		usageUrl: 'https://chatgpt.com/codex/cloud/settings/analytics#usage'
 	},
 	{
-		id: 'gemini',
+		id: 'agy',
 		name: 'Antigravity',
 		command: 'agy',
 		slashCommand: '/usage',
