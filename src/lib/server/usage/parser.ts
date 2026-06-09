@@ -51,7 +51,7 @@ export function stripTerminalOutput(value: string) {
 }
 
 function normalizeProviderUsageLine(providerId: ProviderId, line: string) {
-	if (providerId === 'gemini') return normalizeGeminiUsageLine(line);
+	if (providerId === 'agy') return normalizeGeminiUsageLine(line);
 	if (providerId === 'codex') return normalizeCodexUsageLine(line);
 	if (providerId === 'claude') return normalizeClaudeUsageLine(line);
 	return line.trim();
@@ -90,14 +90,14 @@ export function parseProviderUsage(
 		.filter(Boolean);
 
 	const fiveHour =
-		providerId === 'gemini'
+		providerId === 'agy'
 			? createEmptyWindow('fiveHour')
 			: parseWindow(lines, 'fiveHour', providerId);
 	const week =
-		providerId === 'gemini' ? createEmptyWindow('week') : parseWindow(lines, 'week', providerId);
-	const modelUsages = providerId === 'gemini' ? parseGeminiModelUsages(output, lines) : [];
+		providerId === 'agy' ? createEmptyWindow('week') : parseWindow(lines, 'week', providerId);
+	const modelUsages = providerId === 'agy' ? parseGeminiModelUsages(output, lines) : [];
 	const hasUsage =
-		providerId === 'gemini'
+		providerId === 'agy'
 			? modelUsages.filter((usage) => usage.resetAt !== null || usage.remainingText !== null)
 					.length >= 1
 			: providerId === 'codex'
