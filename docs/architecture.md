@@ -10,11 +10,11 @@ This document is the short implementation reference. Use `fix_check.md` when a r
 
 AI Usage Dashboard is a local SvelteKit app that reads usage from three CLI tools:
 
-| Provider        | Command  | Usage command | Dashboard view           |
-| --------------- | -------- | ------------- | ------------------------ |
-| Claude          | `claude` | `/usage`      | current session and week |
-| Codex           | `codex`  | `/status`     | 5h and weekly limits     |
-| Antigravity CLI | `agy`    | `/usage`      | per-model usage          |
+| Provider    | Command  | Usage command | Dashboard view           |
+| ----------- | -------- | ------------- | ------------------------ |
+| Claude      | `claude` | `/usage`      | current session and week |
+| Codex       | `codex`  | `/status`     | 5h and weekly limits     |
+| Antigravity | `agy`    | `/usage`      | per-model usage          |
 
 The browser never runs CLIs. It reads JSON from the SvelteKit server. The server owns CLI execution, parsing, retries, history, and debug files.
 
@@ -24,11 +24,16 @@ The browser never runs CLIs. It reads JSON from the SvelteKit server. The server
 browser
   -> GET /api/usage
   -> render cached JSON
+  -> POST /api/usage/auto-refresh to configure server-side auto collection
   -> POST /api/usage/refresh when manual refresh is requested
-  -> POST /api/usage/refresh for auto-refresh only while the page is visible and focused
   -> poll GET /api/usage while refreshState.refreshing is true
 
-server refresh
+server auto refresh
+  -> schedule collection in the server process at the selected interval
+  -> keep running while the browser is hidden, minimized, or later reopened
+  -> use child_process pipe collection with windowsHide=true
+
+manual refresh
   -> run provider CLIs in parallel node-pty sessions
   -> send slash command after CLI readiness
   -> capture raw terminal output
@@ -41,21 +46,23 @@ If a refresh takes longer than the short wait window, the API returns the last u
 
 ## Main Files
 
-| Path                                      | Role                                              |
-| ----------------------------------------- | ------------------------------------------------- |
-| `src/routes/+page.svelte`                 | Dashboard UI, refresh controls, logs, stop button |
-| `src/routes/+page.server.ts`              | SSR preload for first paint                       |
-| `src/routes/api/usage/+server.ts`         | Reads stored usage payload                        |
-| `src/routes/api/usage/refresh/+server.ts` | Gates auto/manual refresh and starts collection   |
-| `src/routes/api/server/logs/+server.ts`   | Streams server logs over SSE                      |
-| `src/routes/api/server/stop/+server.ts`   | Stops the current server process                  |
-| `src/lib/server/usage/refresh-manager.ts` | Refresh locking, cached response, history write   |
-| `src/lib/server/usage/collector.ts`       | CLI startup, readiness, retries, raw capture      |
-| `src/lib/server/usage/parser.ts`          | Provider-specific parsing                         |
-| `src/lib/server/usage/storage.ts`         | JSON history persistence                          |
-| `src/lib/usage.ts`                        | Shared provider config and payload types          |
-| `src/hooks.server.ts`                     | Console log mirroring                             |
-| `scripts/start-server.ps1`                | Fixed-address dev/preview launcher                |
+| Path                                           | Role                                              |
+| ---------------------------------------------- | ------------------------------------------------- |
+| `src/routes/+page.svelte`                      | Dashboard UI, refresh controls, logs, stop button |
+| `src/routes/+page.server.ts`                   | SSR preload for first paint                       |
+| `src/routes/api/usage/+server.ts`              | Reads stored usage payload                        |
+| `src/routes/api/usage/auto-refresh/+server.ts` | Configures the server-side auto scheduler         |
+| `src/routes/api/usage/refresh/+server.ts`      | Starts or joins manual collection                 |
+| `src/routes/api/server/logs/+server.ts`        | Streams server logs over SSE                      |
+| `src/routes/api/server/stop/+server.ts`        | Stops the current server process                  |
+| `src/lib/server/usage/refresh-manager.ts`      | Refresh locking, cached response, history write   |
+| `src/lib/server/usage/auto-refresh.ts`         | Server-side auto refresh timer                    |
+| `src/lib/server/usage/collector.ts`            | CLI startup, readiness, retries, raw capture      |
+| `src/lib/server/usage/parser.ts`               | Provider-specific parsing                         |
+| `src/lib/server/usage/storage.ts`              | JSON history persistence                          |
+| `src/lib/usage.ts`                             | Shared provider config and payload types          |
+| `src/hooks.server.ts`                          | Console log mirroring                             |
+| `scripts/start-server.ps1`                     | Fixed-address dev/preview launcher                |
 
 ## Server Launcher
 
@@ -82,7 +89,7 @@ Preview mode does not hot-reload server code reliably. Restart with the script b
 
 Provider collection runs in parallel. Each provider can retry up to 5 times. A failed provider does not stop the other providers, and each completed provider snapshot is recorded before the slowest provider finishes.
 
-Auto-refresh is a browser-side schedule, not a server-side prefetch. The dashboard defaults to a 5-minute auto interval and supports 1, 3, 5, and 10 minutes from the top control. Auto collection is allowed only when the dashboard page is visible and focused; background or stale-tab auto requests return cached data and defer the next check without opening provider CLIs. Manual refresh always uses the interactive collector.
+Auto-refresh is a server-side schedule configured by the browser. The dashboard defaults to a 5-minute auto interval and supports 1, 3, 5, and 10 minutes from the top control. Opening, focusing, minimizing, or restoring the browser only reads cached JSON and never starts provider CLI collection by itself. Scheduled auto collection uses the pipe-only backend to avoid PTY/conhost windows. Manual refresh always starts or joins the interactive `node-pty` collector on demand.
 
 Key timings:
 
@@ -90,8 +97,8 @@ Key timings:
 | ----------------------- | -------------------------------------------------------------------------------------- |
 | CLI working directories | shared env, workspace `..\..\_temp`, `%TEMP%`, `%TMP%`, optional provider-specific env |
 | shell                   | `pwsh.exe -NoLogo -NoProfile -NoExit -WindowStyle Hidden`                              |
-| collector backend       | node-pty winpty by default; ConPTY only with `AI_USAGE_USE_CONPTY=1`                   |
-| auto interval           | `1m`, `3m`, `5m` default, or `10m`; stored in browser localStorage                     |
+| collector backend       | auto refresh: pipe-only; manual refresh: node-pty winpty by default                    |
+| auto interval           | `1m`, `3m`, `5m` default, or `10m`; stored in browser localStorage and sent to server  |
 | retry delays            | `1.5s`, `5s`, `5s`, `10s`                                                              |
 | history bucket          | `10 minutes` for stored history grouping                                               |
 | quick refresh wait      | about `2s`                                                                             |
@@ -101,6 +108,8 @@ Key timings:
 Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. When `.env` sets `AI_USAGE_CWD` or `AI_USAGE_CWD_CANDIDATES`, those shared candidates are used directly, up to three paths total. If both are unset, defaults come from the workspace-level `_temp` directory when installed under `_toolkit\aI_usage`, then OS temp variables. Relative `.env` paths are resolved from the dashboard project root, and `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime for multi-PC setups. The working directory should stay outside the dashboard Git repo to avoid repo-root trust prompts. The collector creates a missing working directory before launching a CLI, but does not create persistent files inside it. Codex may show a ready prompt while MCP startup is still redrawing, so `/status` confirmation is repeated while the slash command remains in the input buffer. If Codex says `Limits: refresh requested`, the collector clears any stale prompt text before resending `/status`, and only the latest Codex status signal decides whether the capture is still pending. If Codex still returns `codex-loading` with no usage markers, the attempt is treated as a startup miss instead of a reportable recovery. Claude can take longer to fill the `/usage` panel; incomplete usage output retries in the same working directory, while trust prompts are detected quickly and move to the next candidate. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
 
 Provider-specific variables (`AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI` for Antigravity, plus matching `AI_USAGE_CWD_CANDIDATES_*`) are only needed for unusual setups and are merged before shared candidates. Each provider uses at most three working-directory candidates per refresh.
+
+If a CLI refuses non-TTY pipe collection during scheduled auto refresh, storage keeps the previous usable values and records the partial raw snapshot. Use manual refresh for an interactive PTY collection when diagnosing that provider.
 
 Codex trust is user-scoped in `%USERPROFILE%\.codex\config.toml`, not project-scoped in this repository.
 
@@ -169,9 +178,8 @@ If a new refresh is weaker than the latest usable history, storage keeps the usa
 
 `POST /api/usage/refresh`
 
-- Starts collection or joins the active collection only for manual refresh, or foreground auto-refresh with the page-active header.
-- Headerless, stale-tab, and background auto-refresh requests return cached data and do not open provider CLIs.
-- Foreground auto-refresh sends `x-ai-usage-refresh-mode: auto`, `x-ai-usage-page-active: 1`, and `x-ai-usage-auto-interval-ms`.
+- Starts collection or joins the active collection only for manual refresh.
+- Auto-refresh requests are compatibility-only: they configure the server scheduler and return cached data.
 - Manual refresh sends `x-ai-usage-refresh-mode: manual`.
 - Send JSON `{}` with same-origin headers during manual testing:
 
@@ -186,6 +194,13 @@ Invoke-RestMethod `
   } `
   -Body '{}'
 ```
+
+`POST /api/usage/auto-refresh`
+
+- Configures the server-side auto scheduler.
+- Body: `{ "enabled": true, "intervalMs": 300000 }`.
+- Accepted intervals: `60000`, `180000`, `300000`, `600000`.
+- Returns `{ enabled, intervalMs, nextRunAt }`.
 
 ## Validation
 
