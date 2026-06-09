@@ -29,7 +29,6 @@
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 40;
-	const STARTUP_AUTO_REFRESH_GRACE_MS = 120_000;
 	const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 	const AUTO_REFRESH_INTERVAL_OPTIONS = [
 		{ label: '1m', value: 1 * 60 * 1000 },
@@ -65,6 +64,8 @@
 	let autoRefreshIntervalMs = $state(DEFAULT_AUTO_REFRESH_INTERVAL_MS);
 	let refreshCooldownUntil = $state<number | null>(null);
 	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
+	let nextAutoPollAt = $state<number | null>(null);
+	let autoRefreshConfigReady = $state(false);
 	let stopping = $state(false);
 	let showLogs = $state(true);
 	let logs = $state<LogEntry[]>([]);
@@ -81,23 +82,32 @@
 
 	const providers = $derived(payload?.providers ?? []);
 	const working = $derived(loading || refreshing);
-	const nextAutoRefreshAt = $derived(autoRefreshAt(payload, autoRefreshIntervalMs));
+	const nextAutoRefreshAt = $derived(
+		nextAutoPollAt === null ? null : new Date(nextAutoPollAt).toISOString()
+	);
 	const nextRefreshCountdown = $derived(formatRefreshCountdown(nextAutoRefreshAt));
 	const refreshCooldownCountdown = $derived(formatCountdown(refreshCooldownUntil));
 	const refreshLocked = $derived(working || isRefreshCoolingDown(refreshCooldownUntil));
-	let initialRefreshStarted = false;
-	let pageIsActive = $state(true);
 
 	$effect(() => {
-		if (!autoRefresh || !pageIsActive || refreshing || refreshLocked || !nextAutoRefreshAt) {
+		if (!autoRefreshConfigReady) {
 			return;
 		}
 
-		const parsedRefreshTime = Date.parse(nextAutoRefreshAt);
-		if (Number.isNaN(parsedRefreshTime)) return;
+		void configureServerAutoRefresh();
+	});
 
-		const delay = Math.max(0, parsedRefreshTime - Date.now() + AUTO_REFRESH_SETTLE_MS);
-		const timer = window.setTimeout(() => void refreshUsage('auto'), delay);
+	$effect(() => {
+		if (!autoRefresh || nextAutoPollAt === null || refreshing) {
+			return;
+		}
+
+		const delay = Math.max(AUTO_REFRESH_SETTLE_MS, nextAutoPollAt - Date.now());
+		const timer = window.setTimeout(() => {
+			void loadUsage().finally(() => {
+				scheduleNextAutoPoll();
+			});
+		}, delay);
 
 		return () => {
 			window.clearTimeout(timer);
@@ -107,14 +117,8 @@
 	onMount(() => {
 		restoreRefreshCooldown();
 		restoreAutoRefreshInterval();
-		pageIsActive = isPageActive();
-		const updatePageActivity = () => {
-			pageIsActive = isPageActive();
-		};
-		document.addEventListener('visibilitychange', updatePageActivity);
-		window.addEventListener('focus', updatePageActivity);
-		window.addEventListener('blur', updatePageActivity);
-		const pageWasReloaded = isPageReload();
+		autoRefreshConfigReady = true;
+		scheduleNextAutoPoll();
 		const cachedPayload = readCachedPayload();
 		if (payload) {
 			cachePayload(payload);
@@ -124,9 +128,7 @@
 			loading = false;
 		}
 		if (!payload) {
-			void loadUsage({ refreshAfterLoad: true });
-		} else if (!isRefreshCoolingDown(refreshCooldownUntil) && shouldRefreshOnMount(payload)) {
-			scheduleStartupRefresh(pageWasReloaded ? 'manual' : 'auto');
+			void loadUsage();
 		}
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
@@ -144,27 +146,17 @@
 
 		return () => {
 			window.clearInterval(clockTimer);
-			document.removeEventListener('visibilitychange', updatePageActivity);
-			window.removeEventListener('focus', updatePageActivity);
-			window.removeEventListener('blur', updatePageActivity);
+			void configureServerAutoRefresh(false);
 			es.close();
 		};
 	});
 
-	async function loadUsage(
-		options: { refreshAfterLoad?: boolean; forceRefreshAfterLoad?: boolean } = {}
-	) {
+	async function loadUsage() {
 		loading = true;
 		error = null;
 
 		try {
 			applyPayload(await fetchUsagePayload('/api/usage'));
-			if (options.refreshAfterLoad && !initialRefreshStarted && shouldRefreshOnMount(payload)) {
-				if (!options.forceRefreshAfterLoad && isRefreshCoolingDown(refreshCooldownUntil)) {
-					return;
-				}
-				scheduleStartupRefresh('auto', { force: options.forceRefreshAfterLoad });
-			}
 		} catch (requestError) {
 			const cachedPayload = readCachedPayload();
 			if (cachedPayload) {
@@ -180,11 +172,6 @@
 		mode: 'manual' | 'auto' = 'manual',
 		options: { force?: boolean } = {}
 	) {
-		const isAuto = mode === 'auto';
-		if (isAuto && !isPageActive()) {
-			pageIsActive = false;
-			return;
-		}
 		if (refreshing || (!options.force && isRefreshCoolingDown(refreshCooldownUntil))) {
 			return;
 		}
@@ -239,29 +226,12 @@
 		cachePayload(nextPayload);
 	}
 
-	function scheduleStartupRefresh(
-		mode: 'manual' | 'auto' = 'auto',
-		options: { force?: boolean } = {}
-	) {
-		if (initialRefreshStarted) return;
-		initialRefreshStarted = true;
-		const delayMs = hasUsablePayload(payload) ? STARTUP_AUTO_REFRESH_GRACE_MS : 250;
-		window.setTimeout(() => void refreshUsage(mode, options), delayMs);
-	}
-
 	function refreshHeaders(mode: 'manual' | 'auto') {
 		const headers: Record<string, string> = { 'x-ai-usage-refresh-mode': mode };
 		if (mode === 'auto') {
 			headers['x-ai-usage-auto-interval-ms'] = String(autoRefreshIntervalMs);
 		}
-		if (mode === 'auto' && isPageActive()) {
-			headers['x-ai-usage-page-active'] = '1';
-		}
 		return headers;
-	}
-
-	function isPageActive() {
-		return document.visibilityState === 'visible' && document.hasFocus();
 	}
 
 	function cachePayload(nextPayload: UsagePayload) {
@@ -281,35 +251,6 @@
 			localStorage.removeItem(USAGE_CACHE_KEY);
 			return null;
 		}
-	}
-
-	function shouldRefreshOnMount(nextPayload: UsagePayload | null) {
-		if (!nextPayload) return true;
-		if (!latestCollectedAt(nextPayload)) return true;
-
-		const nextRefreshAt = Date.parse(autoRefreshAt(nextPayload, autoRefreshIntervalMs) ?? '');
-		return Number.isFinite(nextRefreshAt) && nextRefreshAt <= Date.now();
-	}
-
-	function autoRefreshAt(nextPayload: UsagePayload | null, intervalMs: number) {
-		if (!nextPayload) return null;
-		const baseTime = Date.parse(latestCollectedAt(nextPayload) ?? nextPayload.generatedAt);
-		if (!Number.isFinite(baseTime)) return nextPayload.nextRefreshAt;
-		return new Date(baseTime + intervalMs).toISOString();
-	}
-
-	function hasUsablePayload(nextPayload: UsagePayload | null) {
-		return nextPayload?.providers.some(hasUsableProvider) ?? false;
-	}
-
-	function hasUsableProvider(provider: ProviderUsage) {
-		return (
-			provider.modelUsages.length > 0 ||
-			provider.windows.fiveHour.percent !== null ||
-			provider.windows.week.percent !== null ||
-			provider.windows.fiveHour.used !== null ||
-			provider.windows.week.used !== null
-		);
 	}
 
 	async function fetchUsagePayload(url: string) {
@@ -370,6 +311,38 @@
 		return new Promise<void>((resolve) => {
 			window.setTimeout(resolve, ms);
 		});
+	}
+
+	async function configureServerAutoRefresh(enabled = autoRefresh) {
+		const nextEnabled = enabled && autoRefresh;
+		if (nextEnabled) {
+			scheduleNextAutoPoll();
+		} else {
+			nextAutoPollAt = null;
+		}
+
+		try {
+			const response = await fetch('/api/usage/auto-refresh', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					enabled: nextEnabled,
+					intervalMs: autoRefreshIntervalMs
+				})
+			});
+			if (!response.ok) throw new Error(`Auto refresh setup failed: ${response.status}`);
+		} catch (requestError) {
+			if (enabled) {
+				error =
+					requestError instanceof Error
+						? requestError.message
+						: 'Failed to configure auto refresh.';
+			}
+		}
+	}
+
+	function scheduleNextAutoPoll(delayMs = autoRefreshIntervalMs) {
+		nextAutoPollAt = autoRefresh ? Date.now() + delayMs : null;
 	}
 
 	async function copyActivePanel() {
@@ -737,6 +710,7 @@
 		if (!allowed) return;
 		autoRefreshIntervalMs = value;
 		localStorage.setItem(AUTO_REFRESH_INTERVAL_KEY, String(value));
+		scheduleNextAutoPoll(value);
 	}
 
 	function restoreRefreshCooldown() {
@@ -756,13 +730,6 @@
 		if (AUTO_REFRESH_INTERVAL_OPTIONS.some((option) => option.value === stored)) {
 			autoRefreshIntervalMs = stored;
 		}
-	}
-
-	function isPageReload() {
-		const [navigation] = performance.getEntriesByType(
-			'navigation'
-		) as PerformanceNavigationTiming[];
-		return navigation?.type === 'reload';
 	}
 </script>
 
@@ -847,7 +814,7 @@
 								value={autoRefreshIntervalMs}
 								onchange={(event) => setAutoRefreshInterval(Number(event.currentTarget.value))}
 							>
-								{#each AUTO_REFRESH_INTERVAL_OPTIONS as option}
+								{#each AUTO_REFRESH_INTERVAL_OPTIONS as option (option.value)}
 									<option value={option.value}>{option.label}</option>
 								{/each}
 							</select>
@@ -943,7 +910,7 @@
 						</div>
 
 						<div class="mt-5">
-							{#if provider.provider !== 'gemini'}
+							{#if provider.provider !== 'agy' && (provider.provider as string) !== 'gemini'}
 								<div class="grid gap-2.5 grid-cols-1">
 									{#each WINDOW_ORDER as windowId (windowId)}
 										{@const usageWindow = provider.windows[windowId]}
@@ -1053,7 +1020,7 @@
 							{/if}
 						</div>
 
-						{#if provider.provider !== 'gemini'}
+						{#if provider.provider !== 'agy' && (provider.provider as string) !== 'gemini'}
 							{@const pace = weeklyPace(provider.windows.week)}
 							{#if pace}
 								<div class={`mt-3 rounded-md border px-3 py-3 text-xs ${pace.surface}`}>
