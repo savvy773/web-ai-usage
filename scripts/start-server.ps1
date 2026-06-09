@@ -12,11 +12,13 @@ param(
 
 	[switch]$Status,
 
-	[switch]$Help
+	[switch]$Help,
+
+	[switch]$Foreground
 )
 
 # 숨김 창으로 자기 재실행 (터미널 독립 실행)
-if (-not $env:AI_USAGE_HIDDEN -and -not $Status -and -not $Help) {
+if (-not $env:AI_USAGE_HIDDEN -and -not $Status -and -not $Help -and -not $Foreground) {
 	$env:AI_USAGE_HIDDEN = '1'
 	$argList = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode -HostName $HostName -Port $Port"
 	if ($Open) { $argList += ' -Open' }
@@ -390,17 +392,41 @@ function Start-DashboardServer {
 
 	New-Item -ItemType Directory -Force $LogsDir | Out-Null
 
-	$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ProcessLogPath -RedirectStandardError $StartupErrorLogPath -PassThru
-	Write-ServerState -Process $serverProcess
-	if ($Open) {
-		$url = "http://$HostName`:$Port/"
-		if (Wait-DashboardHttpReady -Url $url -TimeoutSeconds $ServerReadyTimeoutSeconds) {
-			Start-Process $url
-		} else {
-			Write-Warning "Server did not answer within $ServerReadyTimeoutSeconds seconds. Open manually: $url"
+	if ($Foreground) {
+		Write-Host "Running server in foreground. Press Ctrl+C to stop." -ForegroundColor Yellow
+		if ($Open) {
+			$url = "http://$HostName`:$Port/"
+			Start-Job -ScriptBlock {
+				param($u, $timeout)
+				$deadline = (Get-Date).AddSeconds($timeout)
+				while ((Get-Date) -lt $deadline) {
+					try {
+						$response = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+						if ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 500) {
+							Start-Process $u
+							break
+						}
+					} catch {
+						Start-Sleep -Seconds 1
+					}
+				}
+			} -ArgumentList $url, $ServerReadyTimeoutSeconds | Out-Null
 		}
+		& $NodeCommand $ViteArgs
+		return $LASTEXITCODE
+	} else {
+		$serverProcess = Start-Process -FilePath $NodeCommand -ArgumentList $ViteArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ProcessLogPath -RedirectStandardError $StartupErrorLogPath -PassThru
+		Write-ServerState -Process $serverProcess
+		if ($Open) {
+			$url = "http://$HostName`:$Port/"
+			if (Wait-DashboardHttpReady -Url $url -TimeoutSeconds $ServerReadyTimeoutSeconds) {
+				Start-Process $url
+			} else {
+				Write-Warning "Server did not answer within $ServerReadyTimeoutSeconds seconds. Open manually: $url"
+			}
+		}
+		return 0
 	}
-	return 0
 }
 
 function Show-ServerStatus {
@@ -469,6 +495,7 @@ Usage:
   .\scripts\start-server.ps1 -NoRestart
   .\scripts\start-server.ps1 -Status
   .\scripts\start-server.ps1 -Help
+  .\scripts\start-server.ps1 -Foreground
 
 Fixed address:
   http://$HostName`:$Port/
