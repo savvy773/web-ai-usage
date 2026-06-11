@@ -1,5 +1,6 @@
 import { pushLog, type LogEntry } from '$lib/server/log-buffer';
 import type { Handle } from '@sveltejs/kit';
+import { initPersistentSessions } from '$lib/server/usage/collector';
 
 const ESC = String.fromCharCode(27);
 
@@ -52,6 +53,10 @@ if (!g.__aiProcessEventsCaptured) {
 if (!g.__aiServerStartedLogged) {
 	g.__aiServerStartedLogged = true;
 	console.info('[server] Started.');
+	initPersistentSessions().catch((error) => {
+		const msg = error instanceof Error ? error.message : 'Unknown pre-init error';
+		console.error(`[server] Failed to pre-initialize persistent sessions: ${msg}`);
+	});
 }
 
 export const handle: Handle = ({ event, resolve }) => resolve(event);
