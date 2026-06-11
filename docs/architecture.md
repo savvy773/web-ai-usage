@@ -86,6 +86,7 @@ The collector keeps one hidden terminal per provider alive for the lifetime of t
 
 - The first refresh after a server start spawns three hidden `cmd.exe` sessions (one per provider) and launches each CLI once. Later refreshes clear the input and type the slash command into the existing session.
 - Sessions are parked at the CLI main prompt between refreshes. Each capture ends with Esc to close the usage panel — Claude stops reading input entirely if its `/usage` panel idles open.
+- Claude may initially paint cached percentages and then update only individual terminal cells while `Refreshing...` is visible. After the output becomes quiet, the collector forces one full repaint so the parser receives complete rows with the final percentages.
 - On reuse, a TUI may repaint only changed cells, so a resize jiggle forces a full redraw when usage rows have not appeared yet.
 - A reused session that stays completely silent fails fast after 10s and is respawned on the next retry at the requested working directory.
 - Three long-lived `winpty-agent.exe` processes are the expected steady state while the server runs. Server restart disposes and recreates them.
@@ -93,7 +94,7 @@ The collector keeps one hidden terminal per provider alive for the lifetime of t
 
 ## Refresh Rules
 
-Provider collection runs in parallel. Each provider can retry up to 5 times. A failed provider does not stop the other providers, and each completed provider snapshot is recorded before the slowest provider finishes.
+Provider collection runs in parallel. Each provider can retry up to 5 times. A failed provider does not stop the other providers, and each completed provider snapshot is recorded before the slowest provider finishes. A Claude snapshot is not finalized from the first complete-looking screen when the TUI is still asynchronously refreshing.
 
 Auto-refresh is owned by the server scheduler. The dashboard defaults to a 3-minute interval and supports 1, 3, 5, and 10 minutes from the top control. Scheduled collection continues while the page is hidden or minimized. The browser polls cached JSON and scheduler state every 10 seconds only while `document.visibilityState` is `visible`; keyboard focus is not required. A hidden page displays `Hidden` and immediately loads the newest stored result when it becomes visible again.
 
