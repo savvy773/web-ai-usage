@@ -24,18 +24,13 @@ The browser never runs CLIs. It reads JSON from the SvelteKit server. The server
 browser
   -> GET /api/usage
   -> render cached JSON
-  -> POST /api/usage/auto-refresh to configure server-side auto collection
-  -> POST /api/usage/refresh when manual refresh is requested
-  -> poll GET /api/usage while refreshState.refreshing is true
+  -> configure the server auto-refresh interval
+  -> poll cached JSON and scheduler state every 10 seconds while the page is visible
+  -> stop display polling while hidden or minimized; browser focus is irrelevant
 
-server auto refresh
-  -> schedule collection in the server process at the selected interval
-  -> keep running while the browser is hidden, minimized, or later reopened
-  -> use child_process pipe collection with windowsHide=true
-
-manual refresh
-  -> run provider CLIs in parallel node-pty sessions
-  -> send slash command after CLI readiness
+server auto scheduler or manual refresh
+  -> type the slash command into one persistent hidden node-pty session per provider
+  -> (first refresh after server start spawns the sessions once; later refreshes reuse them)
   -> capture raw terminal output
   -> normalize ANSI/control/redraw text
   -> parse provider usage
@@ -51,12 +46,12 @@ If a refresh takes longer than the short wait window, the API returns the last u
 | `src/routes/+page.svelte`                      | Dashboard UI, refresh controls, logs, stop button |
 | `src/routes/+page.server.ts`                   | SSR preload for first paint                       |
 | `src/routes/api/usage/+server.ts`              | Reads stored usage payload                        |
-| `src/routes/api/usage/auto-refresh/+server.ts` | Configures the server-side auto scheduler         |
+| `src/routes/api/usage/auto-refresh/+server.ts` | Configures and reports the server scheduler       |
 | `src/routes/api/usage/refresh/+server.ts`      | Starts or joins manual collection                 |
 | `src/routes/api/server/logs/+server.ts`        | Streams server logs over SSE                      |
 | `src/routes/api/server/stop/+server.ts`        | Stops the current server process                  |
 | `src/lib/server/usage/refresh-manager.ts`      | Refresh locking, cached response, history write   |
-| `src/lib/server/usage/auto-refresh.ts`         | Server-side auto refresh timer                    |
+| `src/lib/server/usage/auto-refresh.ts`         | Server-side scheduled collection                  |
 | `src/lib/server/usage/collector.ts`            | CLI startup, readiness, retries, raw capture      |
 | `src/lib/server/usage/parser.ts`               | Provider-specific parsing                         |
 | `src/lib/server/usage/storage.ts`              | JSON history persistence                          |
@@ -85,31 +80,43 @@ Default behavior:
 
 Preview mode does not hot-reload server code reliably. Restart with the script before judging parser, collector, or API behavior.
 
+## Persistent CLI Sessions
+
+The collector keeps one hidden terminal per provider alive for the lifetime of the server instead of spawning a new terminal on every refresh. This removes the per-refresh console flash and cuts collection time from 10-20s to a few seconds per provider.
+
+- The first refresh after a server start spawns three hidden `cmd.exe` sessions (one per provider) and launches each CLI once. Later refreshes clear the input and type the slash command into the existing session.
+- Sessions are parked at the CLI main prompt between refreshes. Each capture ends with Esc to close the usage panel — Claude stops reading input entirely if its `/usage` panel idles open.
+- On reuse, a TUI may repaint only changed cells, so a resize jiggle forces a full redraw when usage rows have not appeared yet.
+- A reused session that stays completely silent fails fast after 10s and is respawned on the next retry at the requested working directory.
+- Three long-lived `winpty-agent.exe` processes are the expected steady state while the server runs. Server restart disposes and recreates them.
+- `AI_USAGE_DISABLE_PERSISTENT_SESSION=1` falls back to per-refresh PTY spawning for debugging.
+
 ## Refresh Rules
 
 Provider collection runs in parallel. Each provider can retry up to 5 times. A failed provider does not stop the other providers, and each completed provider snapshot is recorded before the slowest provider finishes.
 
-Auto-refresh is a server-side schedule configured by the browser. The dashboard defaults to a 5-minute auto interval and supports 1, 3, 5, and 10 minutes from the top control. Opening, focusing, minimizing, or restoring the browser only reads cached JSON and never starts provider CLI collection by itself. Scheduled auto collection uses the pipe-only backend to avoid PTY/conhost windows. Manual refresh always starts or joins the interactive `node-pty` collector on demand.
+Auto-refresh is owned by the server scheduler. The dashboard defaults to a 3-minute interval and supports 1, 3, 5, and 10 minutes from the top control. Scheduled collection continues while the page is hidden or minimized. The browser polls cached JSON and scheduler state every 10 seconds only while `document.visibilityState` is `visible`; keyboard focus is not required. A hidden page displays `Hidden` and immediately loads the newest stored result when it becomes visible again.
 
 Key timings:
 
-| Setting                 | Value                                                                                  |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| CLI working directories | shared env, workspace `..\..\_temp`, `%TEMP%`, `%TMP%`, optional provider-specific env |
-| shell                   | `pwsh.exe -NoLogo -NoProfile -NoExit -WindowStyle Hidden`                              |
-| collector backend       | auto refresh: pipe-only; manual refresh: node-pty winpty by default                    |
-| auto interval           | `1m`, `3m`, `5m` default, or `10m`; stored in browser localStorage and sent to server  |
-| retry delays            | `1.5s`, `5s`, `5s`, `10s`                                                              |
-| history bucket          | `10 minutes` for stored history grouping                                               |
-| quick refresh wait      | about `2s`                                                                             |
-| manual refresh cooldown | `10s`                                                                                  |
-| frontend polling        | until refresh finishes or polling attempts expire                                      |
+| Setting                  | Value                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| CLI working directories  | shared env, workspace `..\..\_temp`, `%TEMP%`, `%TMP%`, optional provider-specific env |
+| shell                    | `cmd.exe /q /k echo off` inside a hidden node-pty (winpty) session                     |
+| collector backend        | persistent node-pty sessions for auto and manual; pipe only as fallback or via env     |
+| auto interval            | `1m`, `3m` default, `5m`, or `10m`; stored in browser localStorage                     |
+| retry delays             | `1.5s`, `5s`, `5s`, `10s`                                                              |
+| Claude `/usage` interval | at least `50s`, including retries and adjacent manual/automatic refreshes              |
+| history bucket           | `10 minutes` for stored history grouping                                               |
+| quick refresh wait       | about `2s`                                                                             |
+| manual refresh cooldown  | `10s`                                                                                  |
+| frontend polling         | up to `6 minutes`, covering Claude's 50s limit and collector retries                   |
 
-Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. When `.env` sets `AI_USAGE_CWD` or `AI_USAGE_CWD_CANDIDATES`, those shared candidates are used directly, up to three paths total. If both are unset, defaults come from the workspace-level `_temp` directory when installed under `_toolkit\aI_usage`, then OS temp variables. Relative `.env` paths are resolved from the dashboard project root, and `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime for multi-PC setups. The working directory should stay outside the dashboard Git repo to avoid repo-root trust prompts. The collector creates a missing working directory before launching a CLI, but does not create persistent files inside it. Codex may show a ready prompt while MCP startup is still redrawing, so `/status` confirmation is repeated while the slash command remains in the input buffer. If Codex says `Limits: refresh requested`, the collector clears any stale prompt text before resending `/status`, and only the latest Codex status signal decides whether the capture is still pending. If Codex still returns `codex-loading` with no usage markers, the attempt is treated as a startup miss instead of a reportable recovery. Claude can take longer to fill the `/usage` panel; incomplete usage output retries in the same working directory, while trust prompts are detected quickly and move to the next candidate. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
+Collector readiness matters more than speed. The collector should wait for the shell prompt, then the provider prompt, then send the slash command. When `.env` sets `AI_USAGE_CWD` or `AI_USAGE_CWD_CANDIDATES`, those shared candidates are used directly, up to three paths total. If both are unset, defaults come from the workspace-level `_temp` directory when installed under `_toolkit\aI_usage`, then OS temp variables. Relative `.env` paths are resolved from the dashboard project root, and `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime for multi-PC setups. The working directory should stay outside the dashboard Git repo to avoid repo-root trust prompts. The collector creates a missing working directory before launching a CLI, but does not create persistent files inside it. Codex may show a ready prompt while MCP startup is still redrawing, so `/status` confirmation is repeated while the slash command remains in the input buffer. If Codex says `Limits: refresh requested`, the collector clears any stale prompt text before resending `/status`, and only the latest Codex status signal decides whether the capture is still pending. If Codex still returns `codex-loading` with no usage markers, the attempt is treated as a startup miss instead of a reportable recovery. Claude can take longer to fill the `/usage` panel; incomplete usage output retries in the same working directory, while trust prompts are detected quickly and move to the next candidate. Every Claude `/usage` write is separated by at least 50 seconds, and Claude does not use the generic 5-second lost-slash reissue path. If a provider is blocked by trust/auth/update/startup state in one directory, the next retry can move to the next working-directory candidate. When a provider returns `partial` but previous usable data exists, storage keeps the previous values as the served JSON and records the latest partial in the message and raw snapshots.
 
 Provider-specific variables (`AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI` for Antigravity, plus matching `AI_USAGE_CWD_CANDIDATES_*`) are only needed for unusual setups and are merged before shared candidates. Each provider uses at most three working-directory candidates per refresh.
 
-If a CLI refuses non-TTY pipe collection during scheduled auto refresh, storage keeps the previous usable values and records the partial raw snapshot. Use manual refresh for an interactive PTY collection when diagnosing that provider.
+The pipe backend (`runPipeSlashCommand`) only runs when `AI_USAGE_USE_PIPE=1` is set or node-pty itself fails. It cannot drive an interactive TUI, so a CLI that refuses non-TTY collection yields a partial snapshot; storage then keeps the previous usable values.
 
 Codex trust is user-scoped in `%USERPROFILE%\.codex\config.toml`, not project-scoped in this repository.
 
@@ -126,6 +133,7 @@ Codex:
 - Reads `5h limit` and `Weekly limit`.
 - Converts `left` values into used percent for the dashboard.
 - Ignores status lines such as `100% context left`.
+- Skips the CLI update prompt with option `2`; the static `Update available!` banner that stays in scrollback afterwards is not treated as an active prompt (only an option list newer than the latest ready footer counts).
 - Reissues `/status` in the same session when Codex says refresh was requested, clearing the prompt first so retries do not append to stale input.
 
 Antigravity:
@@ -197,8 +205,8 @@ Invoke-RestMethod `
 
 `POST /api/usage/auto-refresh`
 
-- Configures the server-side auto scheduler.
-- Body: `{ "enabled": true, "intervalMs": 300000 }`.
+- Enables or disables the server-side collection timer.
+- Body: `{ "enabled": true, "intervalMs": 180000 }`.
 - Accepted intervals: `60000`, `180000`, `300000`, `600000`.
 - Returns `{ enabled, intervalMs, nextRunAt }`.
 
