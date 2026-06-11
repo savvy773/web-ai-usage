@@ -36,6 +36,8 @@ const CODEX_SLASH_CONFIRM_TIMEOUT_BUFFER_MS = 10_000;
 const TERMINAL_INPUT_CLEAR = '\u0001\u000b';
 const TERMINAL_INPUT_CLEAR_SETTLE_MS = 80;
 const CLAUDE_TRUST_PROMPT_SETTLE_MS = 1200;
+const CLAUDE_FINAL_REPAINT_QUIET_MS = 1500;
+const CLAUDE_FINAL_REPAINT_FALLBACK_MS = 3000;
 const CLAUDE_USAGE_MIN_INTERVAL_MS = 50_000;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
@@ -287,6 +289,8 @@ async function runPtySlashCommand(
 		let terminalClosing = false;
 		let slashReadyTimer: NodeJS.Timeout | undefined;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
+		let claudeFinalRepaintTimer: NodeJS.Timeout | undefined;
+		let claudeFinalRepaintDone = false;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
 		let slashReissueTimer: NodeJS.Timeout | undefined;
 		let claudeTrustPromptTimer: NodeJS.Timeout | undefined;
@@ -380,6 +384,23 @@ async function runPtySlashCommand(
 			} catch (error) {
 				fail(error instanceof Error ? error.message : failureMessage);
 			}
+		};
+
+		const forceClaudeFinalRepaint = () => {
+			if (settled || terminalExited || providerId !== 'claude') return;
+			claudeFinalRepaintTimer = undefined;
+			claudeFinalRepaintDone = true;
+			try {
+				const { cols, rows } = terminal;
+				terminal.resize(cols, rows - 1);
+				terminal.resize(cols, rows);
+			} catch {
+				// The PTY may already be closing.
+			}
+			usageSettleTimer = schedule(
+				() => finishAfterTerminalClose(output),
+				CLAUDE_FINAL_REPAINT_FALLBACK_MS
+			);
 		};
 
 		const writeCommand = () => {
@@ -545,6 +566,14 @@ async function runPtySlashCommand(
 				if (usageSettleTimer) {
 					clearTimeout(usageSettleTimer);
 					timers.delete(usageSettleTimer);
+				}
+				if (providerId === 'claude' && !claudeFinalRepaintDone) {
+					claudeFinalRepaintTimer = cancelTimer(claudeFinalRepaintTimer);
+					claudeFinalRepaintTimer = schedule(
+						forceClaudeFinalRepaint,
+						CLAUDE_FINAL_REPAINT_QUIET_MS
+					);
+					return;
 				}
 				usageSettleTimer = schedule(
 					() => finishAfterTerminalClose(output),
@@ -1029,6 +1058,8 @@ async function runPersistentRequest(
 		let codexStatusRefreshRetryCount = 0;
 		let slashReissueCount = 0;
 		let usageSettleTimer: NodeJS.Timeout | undefined;
+		let claudeFinalRepaintTimer: NodeJS.Timeout | undefined;
+		let claudeFinalRepaintDone = false;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
 		let slashReissueTimer: NodeJS.Timeout | undefined;
 		let claudeTrustPromptTimer: NodeJS.Timeout | undefined;
@@ -1152,6 +1183,27 @@ async function runPersistentRequest(
 			}, SLASH_REISSUE_DELAY_MS);
 		};
 
+		const forceFullRepaint = (allowComplete = false) => {
+			if (settled || !session.alive || (!allowComplete && hasUsageOutput(providerId, output))) {
+				return;
+			}
+			try {
+				const { cols, rows } = session.terminal;
+				session.terminal.resize(cols, rows - 1);
+				session.terminal.resize(cols, rows);
+			} catch {
+				// The PTY may already be closing.
+			}
+		};
+
+		const forceClaudeFinalRepaint = () => {
+			if (settled || providerId !== 'claude') return;
+			claudeFinalRepaintTimer = undefined;
+			claudeFinalRepaintDone = true;
+			forceFullRepaint(true);
+			usageSettleTimer = schedule(finish, CLAUDE_FINAL_REPAINT_FALLBACK_MS);
+		};
+
 		const onChunk = (chunk: string) => {
 			output = appendCapturedOutput(output, chunk);
 
@@ -1169,6 +1221,14 @@ async function runPersistentRequest(
 					clearTimeout(usageSettleTimer);
 					timers.delete(usageSettleTimer);
 				}
+				if (providerId === 'claude' && !claudeFinalRepaintDone) {
+					claudeFinalRepaintTimer = cancelTimer(claudeFinalRepaintTimer);
+					claudeFinalRepaintTimer = schedule(
+						forceClaudeFinalRepaint,
+						CLAUDE_FINAL_REPAINT_QUIET_MS
+					);
+					return;
+				}
 				usageSettleTimer = schedule(finish, usageOutputSettleMs(providerId));
 			}
 
@@ -1182,17 +1242,6 @@ async function runPersistentRequest(
 		// On a reused session the TUI may repaint only changed cells, so the reopened usage
 		// panel never lands as full rows in this request's capture. A resize jiggle forces a
 		// complete redraw of the current screen.
-		const forceFullRepaint = () => {
-			if (settled || !session.alive || hasUsageOutput(providerId, output)) return;
-			try {
-				const { cols, rows } = session.terminal;
-				session.terminal.resize(cols, rows - 1);
-				session.terminal.resize(cols, rows);
-			} catch {
-				// The PTY may already be closing.
-			}
-		};
-
 		// Reset leftover TUI state from the previous request. Esc closes a still-open usage
 		// panel (Claude /usage, Antigravity model screen); Codex skips Esc because its
 		// transcript could repaint stale limit rows into the fresh capture.
