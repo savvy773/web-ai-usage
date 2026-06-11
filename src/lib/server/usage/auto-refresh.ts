@@ -1,6 +1,6 @@
 import { refreshUsagePayload } from './refresh-manager';
 
-const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const AUTO_REFRESH_INTERVAL_OPTIONS = new Set([
 	1 * 60 * 1000,
 	3 * 60 * 1000,
