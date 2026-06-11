@@ -65,8 +65,11 @@ After a successful live refresh, do not treat older `partial` lines as current f
 - A later `usage-output-complete` snapshot supersedes an older `partial` attempt for the same provider.
 - During refresh, providers are collected independently and each completed provider snapshot is recorded before the slowest provider finishes.
 - If served JSON says `Previous data kept`, inspect the raw snapshot for the latest failure, but the browser should still show the previous usable values.
-- On a cold PC boot, the browser may open before the preview server and CLIs are fully warm. The page should keep the cached/previous usable values and show `Cached` instead of `Unavailable`; opening or focusing the page should not start provider CLI collection by itself.
-- Auto-refresh defaults to 5 minutes and can be set to 1, 3, 5, or 10 minutes from the top control. The browser configures the server-side scheduler through `POST /api/usage/auto-refresh`; browser auto polling should use `GET /api/usage` and must not start provider CLIs on focus, restore, or reload. Scheduled auto collection uses the pipe-only backend, while manual refresh uses the interactive PTY backend.
+- On a cold PC boot, the browser may open before the preview server and CLIs are fully warm. The page should keep the cached/previous usable values and show `Cached` instead of `Unavailable`.
+- Auto-refresh defaults to 3 minutes and can be set to 1, 3, 5, or 10 minutes. The server scheduler continues collection while the dashboard is hidden.
+- A visible dashboard must recheck cached usage and scheduler state every 10 seconds regardless of browser focus. Minimizing or switching tabs pauses only browser display polling; returning to the page loads the newest stored result.
+- `POST /api/usage/auto-refresh` must return `enabled: true`, the selected interval, and a future `nextRunAt` while Auto is on.
+- Manual and visible-page completion polling allows up to 6 minutes so Claude's 50-second request spacing and a retry cannot leave the page on the previous payload after server collection finishes.
 - If the latest `data\usage-latest.json` has all providers `ok`, watch the next scheduled refresh before changing code.
 
 For follow-up monitoring, check only lines after the latest successful `generatedAt` time unless the user is asking about an older incident.
@@ -84,7 +87,18 @@ Escalate to parser investigation only when the raw or latest parsed snapshot cle
 
 `DEP0205` / `module.register()` warnings are non-blocking Vite/SvelteKit/Node deprecation warnings unless they are paired with request failures or server startup errors. They are filtered from the dashboard log; track them as dependency maintenance, not as usage parsing failures.
 
-Windows `node-pty` assertion dialogs are native process failures, so the browser cannot catch the dialog after it is created. Browser focus changes and scheduled auto-refresh must not enter the node-pty collector. Server-side auto-refresh uses pipe collection with `windowsHide: true`; manual refresh uses winpty by default to keep interactive CLI output reliable. Only set `AI_USAGE_USE_PIPE=1`, `AI_USAGE_USE_CONPTY=1`, or `AI_USAGE_USE_CONPTY_DLL=1` temporarily when investigating collection behavior.
+Windows `node-pty` assertion dialogs are native process failures, so the browser cannot catch the dialog after it is created. Foreground auto and manual refresh drive persistent winpty sessions without per-refresh spawning. Only set `AI_USAGE_USE_PIPE=1`, `AI_USAGE_USE_CONPTY=1`, or `AI_USAGE_USE_CONPTY_DLL=1` temporarily when investigating collection behavior.
+
+## Persistent CLI Sessions
+
+Manual and scheduled PTY collection reuse one hidden background terminal per provider instead of spawning a new one on every refresh. The first refresh after a server start spawns the terminals once; later refreshes type the slash command into the existing session, so no new `winpty-agent`/`conhost` should appear and refreshes complete in a few seconds per provider.
+
+- Sessions are parked at the CLI main prompt between refreshes. Claude must not be left on the `/usage` panel: an idle open panel makes the CLI stop reading input entirely (captured as 0 bytes for the whole timeout), which is why each capture ends with Esc.
+- Claude `/usage` writes must remain at least 50 seconds apart across retries and adjacent refreshes. Claude must not use the generic 5-second lost-slash reissue path.
+- The 50-second wait is silent by default; its informational countdown is logged only with `AI_USAGE_DEBUG_LOGS=1`.
+- A reused session that stays completely silent fails fast after 10s and is respawned on the next attempt at the requested working directory.
+- Set `AI_USAGE_DISABLE_PERSISTENT_SESSION=1` to fall back to per-refresh PTY spawning when investigating session-related problems.
+- Restarting the server (`scripts\start-server.ps1`) disposes and recreates the sessions.
 
 ## Flicker Narrowing
 
@@ -127,10 +141,11 @@ Interpretation:
 
 - Dashboard-linked collection usually has `node.exe ... vite ... --port 5173` as the server process and provider CLI children close to the refresh time.
 - `OpenConsole.exe` near the refresh time is a likely foreground-flash suspect.
-- `winpty-agent.exe` without `OpenConsole.exe` is expected for manual node-pty winpty collection and should not be treated as a visible terminal by itself. It should not appear for scheduled auto collection.
+- Three long-lived `winpty-agent.exe` processes (one per provider session) are the expected steady state while the server runs; they are hidden and not a flicker source by themselves.
+- A `winpty-agent.exe` with a `StartTime` near a refresh (other than the first refresh after server start) means a persistent session was respawned — check `collector.log` for the failed attempt that caused it.
 - `conhost.exe` can exist for hidden console hosts; check its parent before assuming it is user-visible.
 - A command line such as `D:\Code\_scripts\clean-user.ps1`, VS Code PowerShell services, or manually opened `claude` / `codex` / `agy` terminals points outside the dashboard collector.
-- Browser auto polling should call `GET /api/usage` only. `POST /api/usage/auto-refresh` should configure `{ enabled, intervalMs, nextRunAt }`. Compatibility auto `POST /api/usage/refresh` should return cached data only. Manual refresh must include `x-ai-usage-refresh-mode: manual`.
+- Scheduled auto refresh must come from the server timer. The browser only configures `/api/usage/auto-refresh` and reads cached `/api/usage` data.
 
 ## Phase Meanings
 
@@ -139,6 +154,7 @@ Interpretation:
 | `usage-output-complete`              | Parser found enough usage data                                   | Check `usage-latest.json` and UI rendering                                               |
 | `claude-ready-without-usage-output`  | Claude opened, but `/usage` has not produced complete rows yet   | Retry same working directory; do not switch unless a trust prompt appears                |
 | `claude-trust-prompt`                | Claude is blocked by workspace trust                             | Next retry should move to another trusted candidate quickly                              |
+| `codex-update-prompt`                | Codex's interactive update prompt is currently active            | The collector skips it with option `2`; if the phase persists, diff the raw prompt shape |
 | `codex-loading`                      | Codex is still starting, or `/status` is buffered during startup | The collector retries confirmation; inspect only if the final attempt stays partial      |
 | `codex-status-refresh-pending`       | Codex asked to rerun `/status` shortly                           | Same-session `/status` retry should clear the prompt, wait briefly, and resend `/status` |
 | `codex-status-output-without-limits` | Codex answered, but limit rows are missing                       | Inspect raw text for changed output shape                                                |
@@ -154,6 +170,7 @@ Claude:
 
 - Raw should include `Current session` and `Current week`.
 - Parsed output should include current/week percent and reset text.
+- Consecutive `/usage` writes must be at least 50 seconds apart; a shorter interval is a collector regression.
 - If reset is `Unknown`, the collector may have captured percent before reset text settled.
 
 Codex:
@@ -162,6 +179,7 @@ Codex:
 - `left` values must be converted to used percent.
 - `100% context left` is not a usage row.
 - `Limits: refresh requested; run /status again shortly.` should trigger same-session `/status` retries.
+- After the update prompt is skipped with option `2`, a static `Update available!` banner stays in the captured scrollback. It is informational; only an interactive option list (`Update now`, `Skip until next version`, `Press enter to continue`) newer than the latest ready footer counts as an active prompt.
 - If raw output shows `u/status`, or repeated `/status` prompt text without `5h limit` / `Weekly limit` rows, the retry was appended to stale input instead of being submitted cleanly. Codex can render `›/statusgpt-...` without a newline; the collector should still treat that as a visible slash buffer. `/statusline` completion text is harmless when the phase is `usage-output-complete`.
 
 Antigravity:
@@ -173,22 +191,22 @@ Antigravity:
 
 ## Common Symptoms
 
-| Symptom                                               | Likely cause                                               | Fix direction                                                                                               |
-| ----------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `Cross-site POST form submissions are forbidden`      | Missing JSON body or Origin header                         | Send `{}` with `Origin: http://127.0.0.1:5173`                                                              |
-| Source changes seem ignored                           | Preview server was not restarted                           | Run `.\scripts\start-server.ps1` again                                                                      |
-| All providers become partial in one bucket            | CLI startup/auth timing or `node-pty` path issue           | Inspect latest and last-failure raw snapshots                                                               |
-| Latest UI still shows usable values after partial     | Storage carried forward previous usable snapshot           | Check provider status/message for latest failure                                                            |
-| Cold boot shows Claude `Unavailable` / `Unknown`      | Startup refresh ran before Claude accepted `/usage`        | Keep previous usable history and delay startup auto-refresh                                                 |
-| Terminal window briefly steals focus on focus/restore | Browser focus path started PTY/provider CLI collection     | Browser auto polling must use cached `GET /api/usage`; scheduled collection must use pipe-only auto refresh |
-| Terminal window briefly steals focus on 5-minute tick | Scheduled auto refresh entered PTY/provider CLI collection | Verify auto refresh uses `backend: 'pipe'`; inspect process parent and `collector.log`                      |
-| Antigravity has status rows but no models             | `/usage` panel was not opened or not settled               | Check slash buffer, auth wait, and reissue guard                                                            |
-| Codex shows `Unknown` or `100%`                       | Parser read a status line instead of limit rows            | Narrow Codex parser to limit rows                                                                           |
-| Visual C++ assertion dialog mentions `conpty.node`    | Bundled ConPTY DLL or PTY cleanup path crashed             | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server                                                        |
-| `collector.log` looks quiet during success            | Successful raw snapshots are the stronger evidence         | Check `data\raw\*-latest.parsed.json`                                                                       |
-| Tracked process shows `Recognized: False`             | Date format mismatch during JSON serialization             | Fixed by comparing process creation dates with 2s margin                                                    |
-| `AttachConsole failed` in startup log                 | node-pty / Windows console API compatibility issue         | Non-blocking warning unless Vite server fails to start                                                      |
-| `Cannot find name 'ModelUsage'` on build              | Missing export/import of ModelUsage type in UI             | Fixed by importing ModelUsage from `$lib/usage`                                                             |
+| Symptom                                             | Likely cause                                         | Fix direction                                                        |
+| --------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------- |
+| `Cross-site POST form submissions are forbidden`    | Missing JSON body or Origin header                   | Send `{}` with `Origin: http://127.0.0.1:5173`                       |
+| Source changes seem ignored                         | Preview server was not restarted                     | Run `.\scripts\start-server.ps1` again                               |
+| All providers become partial in one bucket          | CLI startup/auth timing or `node-pty` path issue     | Inspect latest and last-failure raw snapshots                        |
+| Latest UI still shows usable values after partial   | Storage carried forward previous usable snapshot     | Check provider status/message for latest failure                     |
+| UI stays one refresh behind current CLI usage       | Foreground refresh stopped polling before completion | Keep polling until `refreshState` settles and `collectedAt` advances |
+| Cold boot shows Claude `Unavailable` / `Unknown`    | Startup refresh ran before Claude accepted `/usage`  | Keep previous usable history and delay startup auto-refresh          |
+| Hidden page keeps rewriting its local display cache | Browser visibility guard failed                      | Stop browser polling while hidden; keep the server scheduler enabled |
+| Antigravity has status rows but no models           | `/usage` panel was not opened or not settled         | Check slash buffer, auth wait, and reissue guard                     |
+| Codex shows `Unknown` or `100%`                     | Parser read a status line instead of limit rows      | Narrow Codex parser to limit rows                                    |
+| Visual C++ assertion dialog mentions `conpty.node`  | Bundled ConPTY DLL or PTY cleanup path crashed       | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server                 |
+| `collector.log` looks quiet during success          | Successful raw snapshots are the stronger evidence   | Check `data\raw\*-latest.parsed.json`                                |
+| Tracked process shows `Recognized: False`           | Date format mismatch during JSON serialization       | Fixed by comparing process creation dates with 2s margin             |
+| `AttachConsole failed` in startup log               | node-pty / Windows console API compatibility issue   | Non-blocking warning unless Vite server fails to start               |
+| `Cannot find name 'ModelUsage'` on build            | Missing export/import of ModelUsage type in UI       | Fixed by importing ModelUsage from `$lib/usage`                      |
 
 ## When To Change Code
 
