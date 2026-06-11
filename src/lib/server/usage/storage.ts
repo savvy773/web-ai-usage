@@ -131,11 +131,27 @@ function fillMissingWindowReset(
 	window: ProviderUsage['windows']['fiveHour'],
 	previous: ProviderUsage['windows']['fiveHour']
 ): ProviderUsage['windows']['fiveHour'] {
-	if (window.resetAt || window.percent === null || !isFutureReset(previous.resetAt)) return window;
+	if (window.resetAt || window.percent === null) return window;
+
+	let projectedReset = previous.resetAt;
+	if (projectedReset && !isFutureReset(projectedReset)) {
+		const resetTime = Date.parse(projectedReset);
+		if (Number.isFinite(resetTime)) {
+			const intervalMs = window.id === 'week' ? 7 * 24 * 60 * 60 * 1000 : 5 * 60 * 60 * 1000;
+			let nextResetTime = resetTime;
+			const now = Date.now();
+			while (nextResetTime <= now) {
+				nextResetTime += intervalMs;
+			}
+			projectedReset = new Date(nextResetTime).toISOString();
+		}
+	}
+
+	if (!projectedReset || !isFutureReset(projectedReset)) return window;
 
 	return {
 		...window,
-		resetAt: previous.resetAt,
+		resetAt: projectedReset,
 		remainingText: window.remainingText ?? previous.remainingText
 	};
 }
