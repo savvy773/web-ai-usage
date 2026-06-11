@@ -199,7 +199,7 @@ AI_USAGE_CWD_CANDIDATES=%TEMP%
 
 Relative paths such as `..\..\_temp` are resolved from the dashboard project root, so the same config works across PCs after `irm` installation. Keep this directory outside the Git repo to avoid repo-root trust prompts. `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime. The collector creates the working directory if it is missing, but it does not intentionally create persistent files inside it; if a CLI creates temporary files, it owns their cleanup. Each CLI uses at most three candidates. Shared settings are enough for normal use. To customize an unusual provider-specific setup, set `AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI` (used by Antigravity), or their `AI_USAGE_CWD_CANDIDATES_*` variants. Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`. Claude retries incomplete `/usage` loading in the same working directory; it only advances to the next candidate when a trust prompt blocks collection.
 
-Claude `/usage` requests are rate-limited to one request every 50 seconds, including retries and closely spaced manual/automatic refreshes.
+Claude `/usage` requests are rate-limited to one request every 50 seconds, including retries and closely spaced manual/automatic refreshes. Claude can first paint cached percentages while the panel still says `Refreshing...`; the collector waits for terminal output to settle, forces one final full repaint, and only then stores the parsed values.
 
 Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` under `[projects.'path']` entries with `trust_level = "trusted"`.
 
