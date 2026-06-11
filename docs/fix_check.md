@@ -94,6 +94,7 @@ Windows `node-pty` assertion dialogs are native process failures, so the browser
 Manual and scheduled PTY collection reuse one hidden background terminal per provider instead of spawning a new one on every refresh. The first refresh after a server start spawns the terminals once; later refreshes type the slash command into the existing session, so no new `winpty-agent`/`conhost` should appear and refreshes complete in a few seconds per provider.
 
 - Sessions are parked at the CLI main prompt between refreshes. Claude must not be left on the `/usage` panel: an idle open panel makes the CLI stop reading input entirely (captured as 0 bytes for the whole timeout), which is why each capture ends with Esc.
+- Claude can first render cached percentages, show `Refreshing...`, and later repaint only the changed cells. The collector must wait for output to become quiet and force a final full repaint before accepting the parsed session/week values.
 - Claude `/usage` writes must remain at least 50 seconds apart across retries and adjacent refreshes. Claude must not use the generic 5-second lost-slash reissue path.
 - The 50-second wait is silent by default; its informational countdown is logged only with `AI_USAGE_DEBUG_LOGS=1`.
 - A reused session that stays completely silent fails fast after 10s and is respawned on the next attempt at the requested working directory.
@@ -170,6 +171,7 @@ Claude:
 
 - Raw should include `Current session` and `Current week`.
 - Parsed output should include current/week percent and reset text.
+- If the raw tail contains newer standalone `% used` cell updates after an older complete screen, the parsed snapshot must match the final forced full repaint, not the first cached percentages.
 - Consecutive `/usage` writes must be at least 50 seconds apart; a shorter interval is a collector regression.
 - If reset is `Unknown`, the collector may have captured percent before reset text settled.
 
@@ -198,6 +200,7 @@ Antigravity:
 | All providers become partial in one bucket          | CLI startup/auth timing or `node-pty` path issue     | Inspect latest and last-failure raw snapshots                        |
 | Latest UI still shows usable values after partial   | Storage carried forward previous usable snapshot     | Check provider status/message for latest failure                     |
 | UI stays one refresh behind current CLI usage       | Foreground refresh stopped polling before completion | Keep polling until `refreshState` settles and `collectedAt` advances |
+| Claude raw tail has newer percentages than JSON     | Initial cached `/usage` screen completed too early   | Wait for quiet output, force a full repaint, then parse final rows   |
 | Cold boot shows Claude `Unavailable` / `Unknown`    | Startup refresh ran before Claude accepted `/usage`  | Keep previous usable history and delay startup auto-refresh          |
 | Hidden page keeps rewriting its local display cache | Browser visibility guard failed                      | Stop browser polling while hidden; keep the server scheduler enabled |
 | Antigravity has status rows but no models           | `/usage` panel was not opened or not settled         | Check slash buffer, auth wait, and reissue guard                     |
