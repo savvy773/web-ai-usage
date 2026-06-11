@@ -44,7 +44,7 @@
 
 ---
 
-A **SvelteKit server** collects each CLI, captures the output, parses usage data, and stores results locally. Manual refreshes use the interactive `node-pty` collector; the server-side auto scheduler uses a pipe-only background collector to avoid opening PTY/conhost windows. Opening or foregrounding the browser only reads cached JSON so focus changes do not trigger CLI windows. No API keys, no accounts, no data leaving your machine.
+A **SvelteKit server** collects each CLI, captures the output, parses usage data, and stores results locally. Each CLI runs in a hidden persistent `node-pty` session that is spawned once on the first refresh and reused afterwards, so scheduled refreshes do not repeatedly open terminal windows. Auto collection runs on the server even while the dashboard is hidden; the browser updates its display only while the dashboard tab is visible. No API keys, no accounts, no data leaving your machine.
 
 <br />
 
@@ -69,7 +69,7 @@ flowchart LR
 |     | Feature              | Description                                                                                 |
 | :-: | :------------------- | :------------------------------------------------------------------------------------------ |
 | ⚡  | **Multi-provider**   | Runs Claude `/usage` · Codex `/status` · Antigravity `/usage`                               |
-| ⏱️  | **Auto interval**    | Server-side background schedule: 1, 3, 5, or 10 minutes; 5 minutes is the default           |
+| ⏱️  | **Auto interval**    | Silent server collection every 1, 3, 5, or 10 minutes; 3 minutes is the default             |
 |  ↻  | **Smart retry**      | Up to 5 attempts with phase diagnostics and repeated slash-command confirmation             |
 | 📊  | **Weekly Pace card** | Usage bar vs. 20 % minimum threshold — see if you're on track                               |
 |  ⏱  | **Reset countdown**  | Live per-provider countdown to next usage reset                                             |
@@ -92,7 +92,7 @@ irm https://antigravity.google/cli/install.ps1 | iex  # Antigravity
 
 ### Step 2 — Pre-authenticate each CLI
 
-> **This step is required.** Manual refresh and server-side auto-refresh launch CLIs silently and send a slash command — any first-run wizard, login prompt, or trust dialog will cause a timeout and no data will be collected.
+> **This step is required.** Manual and scheduled auto refresh launch CLIs silently and send a slash command — any first-run wizard, login prompt, or trust dialog will cause a timeout and no data will be collected.
 
 Run each CLI **once** in the directory you plan to use as your working directory, complete the full auth flow, then exit:
 
@@ -199,6 +199,8 @@ AI_USAGE_CWD_CANDIDATES=%TEMP%
 
 Relative paths such as `..\..\_temp` are resolved from the dashboard project root, so the same config works across PCs after `irm` installation. Keep this directory outside the Git repo to avoid repo-root trust prompts. `%TEMP%`, `%TMP%`, `$env:TEMP`, and `$env:TMP` are expanded at runtime. The collector creates the working directory if it is missing, but it does not intentionally create persistent files inside it; if a CLI creates temporary files, it owns their cleanup. Each CLI uses at most three candidates. Shared settings are enough for normal use. To customize an unusual provider-specific setup, set `AI_USAGE_CWD_CLAUDE`, `AI_USAGE_CWD_CODEX`, `AI_USAGE_CWD_GEMINI` (used by Antigravity), or their `AI_USAGE_CWD_CANDIDATES_*` variants. Each CLI must be pre-authenticated/trusted in at least one candidate directory. Parsed raw snapshots include the selected `workingDirectory` and all `workingDirectoryCandidates`. Claude retries incomplete `/usage` loading in the same working directory; it only advances to the next candidate when a trust prompt blocks collection.
 
+Claude `/usage` requests are rate-limited to one request every 50 seconds, including retries and closely spaced manual/automatic refreshes.
+
 Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` under `[projects.'path']` entries with `trust_level = "trusted"`.
 
 </details>
@@ -207,9 +209,9 @@ Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` 
 
 ## 🔄 Auto Refresh
 
-Auto refresh defaults to **5 minutes**. Use the interval control in the dashboard to choose **1, 3, 5, or 10 minutes**.
+Auto refresh defaults to **3 minutes**. Use the interval control in the dashboard to choose **1, 3, 5, or 10 minutes**.
 
-When Auto is on, the browser configures a server-side background scheduler. The scheduler uses a pipe-only collector every 5 minutes by default, and the browser polls cached JSON only. Opening, focusing, minimizing, or restoring the dashboard does not start CLI collection. Manual **Refresh** still starts a live interactive collection on demand.
+When Auto is on, the server collects in the background on the selected interval. A visible dashboard rechecks the cached result every 10 seconds and renders it even when another app has keyboard focus. Minimizing the browser or switching tabs pauses browser-side display polling, but silent server collection continues. Returning to the dashboard immediately loads the newest stored result. Manual **Refresh** remains available on demand.
 
 <br />
 
