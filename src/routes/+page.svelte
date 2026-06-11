@@ -17,19 +17,25 @@
 		message: string;
 		timestamp: string;
 	}
+	interface AutoRefreshState {
+		enabled: boolean;
+		intervalMs: number;
+		nextRunAt: string | null;
+	}
 	import type { ProviderUsage, UsagePayload, UsageWindow, UsageWindowId } from '$lib/usage';
 	import type { PageData } from './$types';
 
 	const AUTO_REFRESH_SETTLE_MS = 1000;
 	const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 	const USAGE_CACHE_KEY = 'ai-usage-payload-cache';
-	const AUTO_REFRESH_INTERVAL_KEY = 'ai-usage-auto-refresh-interval-ms';
+	const AUTO_REFRESH_INTERVAL_KEY = 'ai-usage-auto-refresh-interval-ms-v2';
 	const USAGE_REQUEST_TIMEOUT_MS = 10_000;
 	const USAGE_REQUEST_RETRIES = 2;
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
-	const REFRESH_POLL_ATTEMPTS = 40;
-	const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+	const REFRESH_POLL_ATTEMPTS = 240;
+	const VISIBLE_SYNC_INTERVAL_MS = 10_000;
+	const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 	const AUTO_REFRESH_INTERVAL_OPTIONS = [
 		{ label: '1m', value: 1 * 60 * 1000 },
 		{ label: '3m', value: 3 * 60 * 1000 },
@@ -64,8 +70,10 @@
 	let autoRefreshIntervalMs = $state(DEFAULT_AUTO_REFRESH_INTERVAL_MS);
 	let refreshCooldownUntil = $state<number | null>(null);
 	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
-	let nextAutoPollAt = $state<number | null>(null);
+	let nextAutoRefreshAtMs = $state<number | null>(null);
 	let autoRefreshConfigReady = $state(false);
+	let pageIsForeground = $state(false);
+	let visibleSyncInFlight = false;
 	let stopping = $state(false);
 	let showLogs = $state(true);
 	let logs = $state<LogEntry[]>([]);
@@ -83,7 +91,7 @@
 	const providers = $derived(payload?.providers ?? []);
 	const working = $derived(loading || refreshing);
 	const nextAutoRefreshAt = $derived(
-		nextAutoPollAt === null ? null : new Date(nextAutoPollAt).toISOString()
+		nextAutoRefreshAtMs === null ? null : new Date(nextAutoRefreshAtMs).toISOString()
 	);
 	const nextRefreshCountdown = $derived(formatRefreshCountdown(nextAutoRefreshAt));
 	const refreshCooldownCountdown = $derived(formatCountdown(refreshCooldownUntil));
@@ -98,15 +106,13 @@
 	});
 
 	$effect(() => {
-		if (!autoRefresh || nextAutoPollAt === null || refreshing) {
+		if (!autoRefresh || !pageIsForeground || nextAutoRefreshAtMs === null || refreshing) {
 			return;
 		}
 
-		const delay = Math.max(AUTO_REFRESH_SETTLE_MS, nextAutoPollAt - Date.now());
+		const delay = Math.max(AUTO_REFRESH_SETTLE_MS, nextAutoRefreshAtMs - Date.now());
 		const timer = window.setTimeout(() => {
-			void loadUsage().finally(() => {
-				scheduleNextAutoPoll();
-			});
+			void syncAfterScheduledRefresh();
 		}, delay);
 
 		return () => {
@@ -118,7 +124,6 @@
 		restoreRefreshCooldown();
 		restoreAutoRefreshInterval();
 		autoRefreshConfigReady = true;
-		scheduleNextAutoPoll();
 		const cachedPayload = readCachedPayload();
 		if (payload) {
 			cachePayload(payload);
@@ -130,9 +135,22 @@
 		if (!payload) {
 			void loadUsage();
 		}
+		const updateForegroundState = () => {
+			pageIsForeground = document.visibilityState === 'visible';
+			if (pageIsForeground) {
+				void loadUsage().finally(() => syncServerAutoRefreshState());
+			} else {
+				nextAutoRefreshAtMs = null;
+			}
+		};
+		document.addEventListener('visibilitychange', updateForegroundState);
+		updateForegroundState();
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
 		}, 1000);
+		const visibleSyncTimer = window.setInterval(() => {
+			void syncVisibleDashboard();
+		}, VISIBLE_SYNC_INTERVAL_MS);
 
 		const es = new EventSource('/api/server/logs');
 		es.onmessage = (e) => {
@@ -146,7 +164,8 @@
 
 		return () => {
 			window.clearInterval(clockTimer);
-			void configureServerAutoRefresh(false);
+			window.clearInterval(visibleSyncTimer);
+			document.removeEventListener('visibilitychange', updateForegroundState);
 			es.close();
 		};
 	});
@@ -203,6 +222,7 @@
 			refreshing = false;
 			loading = false;
 			refreshMode = 'idle';
+			void syncServerAutoRefreshState();
 		}
 	}
 
@@ -227,11 +247,7 @@
 	}
 
 	function refreshHeaders(mode: 'manual' | 'auto') {
-		const headers: Record<string, string> = { 'x-ai-usage-refresh-mode': mode };
-		if (mode === 'auto') {
-			headers['x-ai-usage-auto-interval-ms'] = String(autoRefreshIntervalMs);
-		}
-		return headers;
+		return { 'x-ai-usage-refresh-mode': mode };
 	}
 
 	function cachePayload(nextPayload: UsagePayload) {
@@ -313,26 +329,20 @@
 		});
 	}
 
-	async function configureServerAutoRefresh(enabled = autoRefresh) {
-		const nextEnabled = enabled && autoRefresh;
-		if (nextEnabled) {
-			scheduleNextAutoPoll();
-		} else {
-			nextAutoPollAt = null;
-		}
-
+	async function configureServerAutoRefresh() {
 		try {
 			const response = await fetch('/api/usage/auto-refresh', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
-					enabled: nextEnabled,
+					enabled: autoRefresh,
 					intervalMs: autoRefreshIntervalMs
 				})
 			});
 			if (!response.ok) throw new Error(`Auto refresh setup failed: ${response.status}`);
+			applyAutoRefreshState((await response.json()) as AutoRefreshState);
 		} catch (requestError) {
-			if (enabled) {
+			if (autoRefresh) {
 				error =
 					requestError instanceof Error
 						? requestError.message
@@ -341,8 +351,62 @@
 		}
 	}
 
-	function scheduleNextAutoPoll(delayMs = autoRefreshIntervalMs) {
-		nextAutoPollAt = autoRefresh ? Date.now() + delayMs : null;
+	async function syncServerAutoRefreshState() {
+		try {
+			const response = await fetch('/api/usage/auto-refresh', { cache: 'no-store' });
+			if (!response.ok) throw new Error(`Auto refresh status failed: ${response.status}`);
+			applyAutoRefreshState((await response.json()) as AutoRefreshState);
+		} catch {
+			nextAutoRefreshAtMs = null;
+		}
+	}
+
+	async function syncVisibleDashboard() {
+		if (document.visibilityState !== 'visible' || visibleSyncInFlight) return;
+		visibleSyncInFlight = true;
+
+		try {
+			const nextPayload = await fetchUsagePayload('/api/usage');
+			applyPayload(nextPayload);
+			await syncServerAutoRefreshState();
+		} catch {
+			// The next visible sync retries without replacing usable cached data.
+		} finally {
+			visibleSyncInFlight = false;
+		}
+	}
+
+	function applyAutoRefreshState(state: AutoRefreshState) {
+		if (!autoRefresh || !pageIsForeground) {
+			nextAutoRefreshAtMs = null;
+			return;
+		}
+
+		const nextRunTime = state.nextRunAt ? Date.parse(state.nextRunAt) : Number.NaN;
+		nextAutoRefreshAtMs = Number.isFinite(nextRunTime) ? nextRunTime : null;
+	}
+
+	async function syncAfterScheduledRefresh() {
+		if (!pageIsForeground) return;
+		const previousCollectedAt = latestCollectedAt(payload);
+		await pollVisibleUsageUntilAdvanced(previousCollectedAt);
+		await syncServerAutoRefreshState();
+	}
+
+	async function pollVisibleUsageUntilAdvanced(previousCollectedAt: string | null) {
+		for (let attempt = 0; attempt < REFRESH_POLL_ATTEMPTS; attempt += 1) {
+			if (document.visibilityState !== 'visible') return;
+			await delay(REFRESH_POLL_INTERVAL_MS);
+
+			const polledPayload = await fetchUsagePayload('/api/usage').catch(() => null);
+			if (!polledPayload) continue;
+			applyPayload(polledPayload);
+
+			const collectedAt = latestCollectedAt(polledPayload);
+			if (!polledPayload.refreshState?.refreshing && collectedAt !== previousCollectedAt) {
+				return;
+			}
+		}
 	}
 
 	async function copyActivePanel() {
@@ -710,7 +774,6 @@
 		if (!allowed) return;
 		autoRefreshIntervalMs = value;
 		localStorage.setItem(AUTO_REFRESH_INTERVAL_KEY, String(value));
-		scheduleNextAutoPoll(value);
 	}
 
 	function restoreRefreshCooldown() {
@@ -767,7 +830,7 @@
 						<div class="mt-1 text-[11px] text-muted-foreground">
 							Updated
 							<span class="font-mono text-cyan-200/80 tabular-nums">
-								{formatTimeOnly(payload?.generatedAt ?? null)}
+								{formatTimeOnly(latestCollectedAt(payload))}
 							</span>
 						</div>
 					</div>
@@ -800,7 +863,11 @@
 								>
 							</div>
 							<span class="font-mono text-[10px] font-medium text-cyan-200/90 tabular-nums">
-								{refreshing && refreshMode === 'auto' ? '···' : nextRefreshCountdown}
+								{refreshing && refreshMode === 'auto'
+									? '···'
+									: autoRefresh && !pageIsForeground
+										? 'Hidden'
+										: nextRefreshCountdown}
 							</span>
 						</button>
 
