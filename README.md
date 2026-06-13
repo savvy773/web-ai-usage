@@ -201,6 +201,8 @@ Relative paths such as `..\..\_temp` are resolved from the dashboard project roo
 
 Claude `/usage` requests are rate-limited to one request every 50 seconds, including retries and closely spaced manual/automatic refreshes. Claude can first paint cached percentages while the panel still says `Refreshing...`; the collector waits for terminal output to settle, forces one final full repaint, and only then stores the parsed values.
 
+Antigravity can also repaint only changed quota cells after its first complete `/usage` screen. The collector waits for quiet output and forces one final full repaint before storing the grouped 5-hour and weekly values.
+
 Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` under `[projects.'path']` entries with `trust_level = "trusted"`.
 
 </details>
