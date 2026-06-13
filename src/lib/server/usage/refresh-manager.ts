@@ -17,8 +17,16 @@ export async function readManagedUsagePayload() {
 	return attachRefreshState(await readUsagePayload());
 }
 
-export async function refreshUsagePayload(options: { backend?: CollectionBackend } = {}) {
-	const refresh = startRefresh(options);
+export async function refreshUsagePayload(
+	options: { backend?: CollectionBackend; waitForCompletion?: boolean } = {}
+) {
+	const { waitForCompletion = false, ...collectionOptions } = options;
+	const refresh = startRefresh(collectionOptions);
+
+	if (waitForCompletion) {
+		return { payload: attachRefreshState(await refresh), pending: false };
+	}
+
 	const quickPayload = await Promise.race([refresh, delay(QUICK_REFRESH_WAIT_MS).then(() => null)]);
 
 	if (quickPayload) {
