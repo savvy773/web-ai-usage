@@ -286,6 +286,11 @@ function applyCodexLimitLine(window: UsageWindow, line: string) {
 }
 
 function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
+	const groupedUsages = parseGeminiGroupedQuotaUsages(output);
+	if (groupedUsages.length > 0) {
+		return groupedUsages;
+	}
+
 	const barUsages = parseGeminiBarModelRows(output);
 	if (barUsages.length >= 3) {
 		return mergeGeminiModelUsages(barUsages);
@@ -300,6 +305,59 @@ function parseGeminiModelUsages(output: string, lines: string[]): ModelUsage[] {
 	];
 
 	return mergeGeminiModelUsages(usages);
+}
+
+function parseGeminiGroupedQuotaUsages(output: string): ModelUsage[] {
+	const lines = stripTerminalOutput(output)
+		.split('\n')
+		.map((line) => normalizeGeminiUsageLine(line))
+		.filter(Boolean);
+	const lastPanelIndex = findLastMatchingIndex(lines, /Models\s*&\s*Quota/i);
+	const panelLines = lastPanelIndex >= 0 ? lines.slice(lastPanelIndex) : lines;
+	const usages: ModelUsage[] = [];
+	let group: 'Gemini' | 'Claude/GPT' | null = null;
+
+	for (let index = 0; index < panelLines.length; index += 1) {
+		const line = panelLines[index];
+		if (/^GEMINI MODELS$/i.test(line)) {
+			group = 'Gemini';
+			continue;
+		}
+		if (/^CLAUDE AND GPT MODELS$/i.test(line)) {
+			group = 'Claude/GPT';
+			continue;
+		}
+
+		const limit = /\bWeekly Limit\b/i.test(line)
+			? 'Week'
+			: /\bFive Hour Limit\b/i.test(line)
+				? '5h'
+				: null;
+		if (!group || !limit) continue;
+
+		const section = panelLines.slice(index + 1, index + 5);
+		const percentLine = section.find((candidate) => /\d+(?:\.\d+)?\s*%/.test(candidate));
+		const statusLine = section.find((candidate) =>
+			/\b(?:remaining|quota available|refreshes?\s+in)\b/i.test(candidate)
+		);
+		const remainingPercent = percentLine ? parsePercent(percentLine) : null;
+		if (remainingPercent === null || !statusLine) continue;
+
+		usages.push({
+			label: `${group} · ${limit}`,
+			percent: clampPercent(100 - remainingPercent) ?? 0,
+			resetAt: null,
+			remainingText: parseGeminiRemainingText(statusLine)
+		});
+	}
+
+	const order = ['Gemini · 5h', 'Gemini · Week', 'Claude/GPT · 5h', 'Claude/GPT · Week'];
+	return usages
+		.filter(
+			(usage, index, values) =>
+				values.findLastIndex((candidate) => candidate.label === usage.label) === index
+		)
+		.sort((left, right) => order.indexOf(left.label) - order.indexOf(right.label));
 }
 
 function extractGeminiModelUsageSection(output: string) {
@@ -938,11 +996,11 @@ function parseGeminiRemainingText(value: string) {
 	const rawText = (durationMatch?.[1]?.trim() ?? value).trim();
 
 	const inMatch = rawText.match(/\b(?:refreshes|resets|renews|in)\s+in\s+([^\r\n]+)/i);
-	if (inMatch) return inMatch[1].trim();
+	if (inMatch) return normalizeGeminiDuration(inMatch[1].trim());
 
 	const durationOnlyMatch = rawText.match(/(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i);
 	if (durationOnlyMatch && durationOnlyMatch[0].trim() && durationOnlyMatch[0].trim() === rawText) {
-		return durationOnlyMatch[0].trim();
+		return normalizeGeminiDuration(durationOnlyMatch[0].trim());
 	}
 
 	if (/quota\s+available/i.test(rawText)) {
@@ -950,6 +1008,23 @@ function parseGeminiRemainingText(value: string) {
 	}
 
 	return rawText;
+}
+
+function normalizeGeminiDuration(value: string) {
+	const match = value.match(/^(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?$/i);
+	if (!match || !match[0].trim()) return value;
+
+	const totalHours = Number(match[1] ?? 0) * 24 + Number(match[2] ?? 0);
+	const minutes = Number(match[3] ?? 0);
+	const days = Math.floor(totalHours / 24);
+	const hours = totalHours % 24;
+	const parts = [
+		days > 0 ? `${days}d` : null,
+		hours > 0 ? `${hours}h` : null,
+		minutes > 0 || (days === 0 && hours === 0) ? `${minutes}m` : null
+	];
+
+	return parts.filter((part): part is string => part !== null).join(' ');
 }
 
 function cleanResetText(value: string) {
