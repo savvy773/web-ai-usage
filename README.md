@@ -211,7 +211,7 @@ Codex stores trusted directories per user in `%USERPROFILE%\.codex\config.toml` 
 
 Auto refresh defaults to **3 minutes**. Use the interval control in the dashboard to choose **1, 3, 5, or 10 minutes**.
 
-When Auto is on, the server collects in the background on the selected interval. A visible dashboard rechecks the cached result every 10 seconds and renders it even when another app has keyboard focus. Minimizing the browser or switching tabs pauses browser-side display polling, but silent server collection continues. Returning to the dashboard immediately loads the newest stored result. Manual **Refresh** remains available on demand.
+When Auto is on, the server collects in the background on the selected interval. At `00s`, the dashboard shows collection in progress; the next interval starts only after all provider results are stored. A visible dashboard rechecks the cached result every 10 seconds and renders it even when another app has keyboard focus. Minimizing the browser or switching tabs pauses browser-side display polling, but silent server collection continues. Returning to the dashboard immediately loads the newest stored result. Manual **Refresh** remains available on demand.
 
 <br />
 
@@ -221,7 +221,7 @@ When Auto is on, the server collects in the background on the selected interval.
 | :-------------- | :------- | :-------- | :----------------------------- |
 | Claude          | `claude` | `/usage`  | current session + weekly usage |
 | Codex           | `codex`  | `/status` | 5h limit + weekly limit        |
-| Antigravity CLI | `agy`    | `/usage`  | per-model usage + resets       |
+| Antigravity CLI | `agy`    | `/usage`  | grouped 5h + weekly quotas     |
 
 > Antigravity `/usage` works with plain `agy`; no dashboard-specific skip-permissions flag is required.
 
