@@ -69,7 +69,6 @@
 	let autoRefresh = $state(true);
 	let autoRefreshIntervalMs = $state(DEFAULT_AUTO_REFRESH_INTERVAL_MS);
 	let refreshCooldownUntil = $state<number | null>(null);
-	let refreshMode = $state<'idle' | 'manual' | 'auto'>('idle');
 	let nextAutoRefreshAtMs = $state<number | null>(null);
 	let autoRefreshConfigReady = $state(false);
 	let pageIsForeground = $state(false);
@@ -89,7 +88,8 @@
 	});
 
 	const providers = $derived(payload?.providers ?? []);
-	const working = $derived(loading || refreshing);
+	const serverRefreshing = $derived(payload?.refreshState?.refreshing ?? false);
+	const working = $derived(loading || refreshing || serverRefreshing);
 	const nextAutoRefreshAt = $derived(
 		nextAutoRefreshAtMs === null ? null : new Date(nextAutoRefreshAtMs).toISOString()
 	);
@@ -195,7 +195,6 @@
 			return;
 		}
 
-		refreshMode = mode;
 		refreshing = true;
 		error = null;
 		setRefreshCooldown(Date.now() + MANUAL_REFRESH_COOLDOWN_MS);
@@ -221,7 +220,6 @@
 		} finally {
 			refreshing = false;
 			loading = false;
-			refreshMode = 'idle';
 			void syncServerAutoRefreshState();
 		}
 	}
@@ -863,7 +861,7 @@
 								>
 							</div>
 							<span class="font-mono text-[10px] font-medium text-cyan-200/90 tabular-nums">
-								{refreshing && refreshMode === 'auto'
+								{serverRefreshing
 									? '···'
 									: autoRefresh && !pageIsForeground
 										? 'Hidden'
@@ -1035,7 +1033,7 @@
 
 							{#if (provider.modelUsages ?? []).length > 0}
 								<div class="grid gap-2.5 grid-cols-1">
-									{#each (provider.modelUsages ?? []).filter((m) => m.label === 'Flash 3.5 (High)' || m.label === 'Sonnet 4.6') as model (model.label)}
+									{#each (provider.modelUsages ?? []).filter((m) => m.label === 'Flash 3.5 (High)' || m.label === 'Sonnet 4.6' || /^(Gemini|Claude\/GPT) · (5h|Week)$/.test(m.label)) as model (model.label)}
 										<div
 											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 backdrop-blur-sm transition-all duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
 										>
