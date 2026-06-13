@@ -10,11 +10,11 @@ This document is the short implementation reference. Use `fix_check.md` when a r
 
 AI Usage Dashboard is a local SvelteKit app that reads usage from three CLI tools:
 
-| Provider    | Command  | Usage command | Dashboard view           |
-| ----------- | -------- | ------------- | ------------------------ |
-| Claude      | `claude` | `/usage`      | current session and week |
-| Codex       | `codex`  | `/status`     | 5h and weekly limits     |
-| Antigravity | `agy`    | `/usage`      | per-model usage          |
+| Provider    | Command  | Usage command | Dashboard view            |
+| ----------- | -------- | ------------- | ------------------------- |
+| Claude      | `claude` | `/usage`      | current session and week  |
+| Codex       | `codex`  | `/status`     | 5h and weekly limits      |
+| Antigravity | `agy`    | `/usage`      | grouped 5h + weekly quota |
 
 The browser never runs CLIs. It reads JSON from the SvelteKit server. The server owns CLI execution, parsing, retries, history, and debug files.
 
@@ -96,7 +96,7 @@ The collector keeps one hidden terminal per provider alive for the lifetime of t
 
 Provider collection runs in parallel. Each provider can retry up to 5 times. A failed provider does not stop the other providers, and each completed provider snapshot is recorded before the slowest provider finishes. A Claude snapshot is not finalized from the first complete-looking screen when the TUI is still asynchronously refreshing.
 
-Auto-refresh is owned by the server scheduler. The dashboard defaults to a 3-minute interval and supports 1, 3, 5, and 10 minutes from the top control. Scheduled collection continues while the page is hidden or minimized. The browser polls cached JSON and scheduler state every 10 seconds only while `document.visibilityState` is `visible`; keyboard focus is not required. A hidden page displays `Hidden` and immediately loads the newest stored result when it becomes visible again.
+Auto-refresh is owned by the server scheduler. The dashboard defaults to a 3-minute interval and supports 1, 3, 5, and 10 minutes from the top control. When a countdown reaches zero, the scheduler clears `nextRunAt`, waits for the active provider collection and snapshot writes to finish, and only then schedules the next full interval. Scheduled collection continues while the page is hidden or minimized. The browser polls cached JSON and scheduler state every 10 seconds only while `document.visibilityState` is `visible`; keyboard focus is not required. A hidden page displays `Hidden` and immediately loads the newest stored result when it becomes visible again.
 
 Key timings:
 
@@ -109,7 +109,7 @@ Key timings:
 | retry delays             | `1.5s`, `5s`, `5s`, `10s`                                                              |
 | Claude `/usage` interval | at least `50s`, including retries and adjacent manual/automatic refreshes              |
 | history bucket           | `10 minutes` for stored history grouping                                               |
-| quick refresh wait       | about `2s`                                                                             |
+| quick refresh wait       | about `2s` for manual HTTP responses; scheduled runs wait for full completion          |
 | manual refresh cooldown  | `10s`                                                                                  |
 | frontend polling         | up to `6 minutes`, covering Claude's 50s limit and collector retries                   |
 
@@ -140,8 +140,9 @@ Codex:
 Antigravity:
 
 - Reads the latest complete `Model Quota` or `Model usage` panel.
-- Accepts whitelisted model rows: `Gemini 3.5 Flash (High)`, `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, and `GPT-OSS 120B (Medium)`.
-- Requires at least 1 model row with reset or remaining-time data.
+- Parses the current `Models & Quota` screen into four rows: Gemini and Claude/GPT, each with 5-hour and weekly usage.
+- Converts the CLI's remaining percentage to used percentage and normalizes `Refreshes in ...` countdowns to days, hours, and minutes.
+- Retains the older whitelisted per-model parser for compatibility.
 - Treats auth wait, slash-buffer wait, and incomplete model screens as collector timing states before assuming parser failure.
 
 ## Normalization
