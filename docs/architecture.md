@@ -142,6 +142,7 @@ Antigravity:
 - Reads the latest complete `Model Quota` or `Model usage` panel.
 - Parses the current `Models & Quota` screen into four rows: Gemini and Claude/GPT, each with 5-hour and weekly usage.
 - Converts the CLI's remaining percentage to used percentage and normalizes `Refreshes in ...` countdowns to days, hours, and minutes.
+- Waits for quiet output and forces a final full repaint because the CLI can update only changed percentage cells after its first complete screen.
 - Retains the older whitelisted per-model parser for compatibility.
 - Treats auth wait, slash-buffer wait, and incomplete model screens as collector timing states before assuming parser failure.
 
