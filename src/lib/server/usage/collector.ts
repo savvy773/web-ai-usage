@@ -38,6 +38,8 @@ const TERMINAL_INPUT_CLEAR_SETTLE_MS = 80;
 const CLAUDE_TRUST_PROMPT_SETTLE_MS = 1200;
 const CLAUDE_FINAL_REPAINT_QUIET_MS = 1500;
 const CLAUDE_FINAL_REPAINT_FALLBACK_MS = 3000;
+const AGY_FINAL_REPAINT_QUIET_MS = 2000;
+const AGY_FINAL_REPAINT_FALLBACK_MS = 4000;
 const CLAUDE_USAGE_MIN_INTERVAL_MS = 50_000;
 const SLASH_REISSUE_DELAY_MS = 5000;
 const MAX_SLASH_REISSUES = 3;
@@ -291,6 +293,8 @@ async function runPtySlashCommand(
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		let claudeFinalRepaintTimer: NodeJS.Timeout | undefined;
 		let claudeFinalRepaintDone = false;
+		let agyFinalRepaintTimer: NodeJS.Timeout | undefined;
+		let agyFinalRepaintDone = false;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
 		let slashReissueTimer: NodeJS.Timeout | undefined;
 		let claudeTrustPromptTimer: NodeJS.Timeout | undefined;
@@ -400,6 +404,23 @@ async function runPtySlashCommand(
 			usageSettleTimer = schedule(
 				() => finishAfterTerminalClose(output),
 				CLAUDE_FINAL_REPAINT_FALLBACK_MS
+			);
+		};
+
+		const forceAgyFinalRepaint = () => {
+			if (settled || terminalExited || providerId !== 'agy') return;
+			agyFinalRepaintTimer = undefined;
+			agyFinalRepaintDone = true;
+			try {
+				const { cols, rows } = terminal;
+				terminal.resize(cols, rows - 1);
+				terminal.resize(cols, rows);
+			} catch {
+				// The PTY may already be closing.
+			}
+			usageSettleTimer = schedule(
+				() => finishAfterTerminalClose(output),
+				AGY_FINAL_REPAINT_FALLBACK_MS
 			);
 		};
 
@@ -573,6 +594,11 @@ async function runPtySlashCommand(
 						forceClaudeFinalRepaint,
 						CLAUDE_FINAL_REPAINT_QUIET_MS
 					);
+					return;
+				}
+				if (providerId === 'agy' && !agyFinalRepaintDone) {
+					agyFinalRepaintTimer = cancelTimer(agyFinalRepaintTimer);
+					agyFinalRepaintTimer = schedule(forceAgyFinalRepaint, AGY_FINAL_REPAINT_QUIET_MS);
 					return;
 				}
 				usageSettleTimer = schedule(
@@ -1060,6 +1086,8 @@ async function runPersistentRequest(
 		let usageSettleTimer: NodeJS.Timeout | undefined;
 		let claudeFinalRepaintTimer: NodeJS.Timeout | undefined;
 		let claudeFinalRepaintDone = false;
+		let agyFinalRepaintTimer: NodeJS.Timeout | undefined;
+		let agyFinalRepaintDone = false;
 		let codexStatusRefreshRetryTimer: NodeJS.Timeout | undefined;
 		let slashReissueTimer: NodeJS.Timeout | undefined;
 		let claudeTrustPromptTimer: NodeJS.Timeout | undefined;
@@ -1204,6 +1232,14 @@ async function runPersistentRequest(
 			usageSettleTimer = schedule(finish, CLAUDE_FINAL_REPAINT_FALLBACK_MS);
 		};
 
+		const forceAgyFinalRepaint = () => {
+			if (settled || providerId !== 'agy') return;
+			agyFinalRepaintTimer = undefined;
+			agyFinalRepaintDone = true;
+			forceFullRepaint(true);
+			usageSettleTimer = schedule(finish, AGY_FINAL_REPAINT_FALLBACK_MS);
+		};
+
 		const onChunk = (chunk: string) => {
 			output = appendCapturedOutput(output, chunk);
 
@@ -1227,6 +1263,11 @@ async function runPersistentRequest(
 						forceClaudeFinalRepaint,
 						CLAUDE_FINAL_REPAINT_QUIET_MS
 					);
+					return;
+				}
+				if (providerId === 'agy' && !agyFinalRepaintDone) {
+					agyFinalRepaintTimer = cancelTimer(agyFinalRepaintTimer);
+					agyFinalRepaintTimer = schedule(forceAgyFinalRepaint, AGY_FINAL_REPAINT_QUIET_MS);
 					return;
 				}
 				usageSettleTimer = schedule(finish, usageOutputSettleMs(providerId));
