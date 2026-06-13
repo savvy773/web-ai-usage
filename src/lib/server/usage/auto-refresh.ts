@@ -58,8 +58,9 @@ function scheduleNextAutoRefresh() {
 
 async function runAutoRefresh() {
 	if (!enabled) return;
+	nextRunAt = null;
 	try {
-		await refreshUsagePayload();
+		await refreshUsagePayload({ waitForCompletion: true });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Auto refresh failed.';
 		console.warn('[auto-refresh] Error:', message);
