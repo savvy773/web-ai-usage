@@ -67,6 +67,7 @@ After a successful live refresh, do not treat older `partial` lines as current f
 - If served JSON says `Previous data kept`, inspect the raw snapshot for the latest failure, but the browser should still show the previous usable values.
 - On a cold PC boot, the browser may open before the preview server and CLIs are fully warm. The page should keep the cached/previous usable values and show `Cached` instead of `Unavailable`.
 - Auto-refresh defaults to 3 minutes and can be set to 1, 3, 5, or 10 minutes. The server scheduler continues collection while the dashboard is hidden.
+- At `00s`, Auto must show collection in progress. `nextRunAt` stays empty during collection and is set to a new full interval only after `refreshState.refreshing` becomes `false` and provider `collectedAt` advances.
 - A visible dashboard must recheck cached usage and scheduler state every 10 seconds regardless of browser focus. Minimizing or switching tabs pauses only browser display polling; returning to the page loads the newest stored result.
 - `POST /api/usage/auto-refresh` must return `enabled: true`, the selected interval, and a future `nextRunAt` while Auto is on.
 - Manual and visible-page completion polling allows up to 6 minutes so Claude's 50-second request spacing and a retry cannot leave the page on the previous payload after server collection finishes.
@@ -186,30 +187,33 @@ Codex:
 
 Antigravity:
 
-- Raw should include `Model Quota` or `Model usage`.
-- Parsed output should show at least 1 whitelisted model row.
+- Raw should include `Models & Quota`, `Model Quota`, or `Model usage`.
+- The current grouped screen should parse 4 quota rows: `Gemini · 5h`, `Gemini · Week`, `Claude/GPT · 5h`, and `Claude/GPT · Week`.
+- Long reset countdowns should be normalized to days, hours, and minutes, for example `136h 30m` -> `5d 16h 30m`.
+- Older per-model screens should still show at least 1 whitelisted model row.
 - `quota-percent` without `model-screen` usually means `/usage` did not open the panel yet.
-- `parsed-models=1/1` points to redraw or panel-boundary parsing.
+- A grouped screen with fewer than `parsed-models=4/4` points to redraw or panel-boundary parsing.
 
 ## Common Symptoms
 
-| Symptom                                             | Likely cause                                         | Fix direction                                                        |
-| --------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------- |
-| `Cross-site POST form submissions are forbidden`    | Missing JSON body or Origin header                   | Send `{}` with `Origin: http://127.0.0.1:5173`                       |
-| Source changes seem ignored                         | Preview server was not restarted                     | Run `.\scripts\start-server.ps1` again                               |
-| All providers become partial in one bucket          | CLI startup/auth timing or `node-pty` path issue     | Inspect latest and last-failure raw snapshots                        |
-| Latest UI still shows usable values after partial   | Storage carried forward previous usable snapshot     | Check provider status/message for latest failure                     |
-| UI stays one refresh behind current CLI usage       | Foreground refresh stopped polling before completion | Keep polling until `refreshState` settles and `collectedAt` advances |
-| Claude raw tail has newer percentages than JSON     | Initial cached `/usage` screen completed too early   | Wait for quiet output, force a full repaint, then parse final rows   |
-| Cold boot shows Claude `Unavailable` / `Unknown`    | Startup refresh ran before Claude accepted `/usage`  | Keep previous usable history and delay startup auto-refresh          |
-| Hidden page keeps rewriting its local display cache | Browser visibility guard failed                      | Stop browser polling while hidden; keep the server scheduler enabled |
-| Antigravity has status rows but no models           | `/usage` panel was not opened or not settled         | Check slash buffer, auth wait, and reissue guard                     |
-| Codex shows `Unknown` or `100%`                     | Parser read a status line instead of limit rows      | Narrow Codex parser to limit rows                                    |
-| Visual C++ assertion dialog mentions `conpty.node`  | Bundled ConPTY DLL or PTY cleanup path crashed       | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server                 |
-| `collector.log` looks quiet during success          | Successful raw snapshots are the stronger evidence   | Check `data\raw\*-latest.parsed.json`                                |
-| Tracked process shows `Recognized: False`           | Date format mismatch during JSON serialization       | Fixed by comparing process creation dates with 2s margin             |
-| `AttachConsole failed` in startup log               | node-pty / Windows console API compatibility issue   | Non-blocking warning unless Vite server fails to start               |
-| `Cannot find name 'ModelUsage'` on build            | Missing export/import of ModelUsage type in UI       | Fixed by importing ModelUsage from `$lib/usage`                      |
+| Symptom                                             | Likely cause                                              | Fix direction                                                        |
+| --------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------- |
+| `Cross-site POST form submissions are forbidden`    | Missing JSON body or Origin header                        | Send `{}` with `Origin: http://127.0.0.1:5173`                       |
+| Source changes seem ignored                         | Preview server was not restarted                          | Run `.\scripts\start-server.ps1` again                               |
+| All providers become partial in one bucket          | CLI startup/auth timing or `node-pty` path issue          | Inspect latest and last-failure raw snapshots                        |
+| Latest UI still shows usable values after partial   | Storage carried forward previous usable snapshot          | Check provider status/message for latest failure                     |
+| UI stays one refresh behind current CLI usage       | Foreground refresh stopped polling before completion      | Keep polling until `refreshState` settles and `collectedAt` advances |
+| Claude raw tail has newer percentages than JSON     | Initial cached `/usage` screen completed too early        | Wait for quiet output, force a full repaint, then parse final rows   |
+| Cold boot shows Claude `Unavailable` / `Unknown`    | Startup refresh ran before Claude accepted `/usage`       | Keep previous usable history and delay startup auto-refresh          |
+| Hidden page keeps rewriting its local display cache | Browser visibility guard failed                           | Stop browser polling while hidden; keep the server scheduler enabled |
+| Antigravity shows only `GPT-OSS 120B 0%`            | Parser read the old per-model shape from a grouped screen | Parse `Models & Quota` as four group/window rows                     |
+| Antigravity has status rows but no models           | `/usage` panel was not opened or not settled              | Check slash buffer, auth wait, and reissue guard                     |
+| Codex shows `Unknown` or `100%`                     | Parser read a status line instead of limit rows           | Narrow Codex parser to limit rows                                    |
+| Visual C++ assertion dialog mentions `conpty.node`  | Bundled ConPTY DLL or PTY cleanup path crashed            | Keep `AI_USAGE_USE_CONPTY_DLL` unset; restart server                 |
+| `collector.log` looks quiet during success          | Successful raw snapshots are the stronger evidence        | Check `data\raw\*-latest.parsed.json`                                |
+| Tracked process shows `Recognized: False`           | Date format mismatch during JSON serialization            | Fixed by comparing process creation dates with 2s margin             |
+| `AttachConsole failed` in startup log               | node-pty / Windows console API compatibility issue        | Non-blocking warning unless Vite server fails to start               |
+| `Cannot find name 'ModelUsage'` on build            | Missing export/import of ModelUsage type in UI            | Fixed by importing ModelUsage from `$lib/usage`                      |
 
 ## When To Change Code
 
