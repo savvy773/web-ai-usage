@@ -992,10 +992,13 @@ function parseGeminiResetAt(value: string) {
 }
 
 function parseGeminiRemainingText(value: string) {
+	const refreshMatch = value.match(/\b(?:refreshes|resets|renews)\s+in\s+([^\r\n·]+)/i);
+	if (refreshMatch) return normalizeGeminiDuration(refreshMatch[1].trim());
+
 	const durationMatch = value.match(/\(([^)]+)\)/);
 	const rawText = (durationMatch?.[1]?.trim() ?? value).trim();
 
-	const inMatch = rawText.match(/\b(?:refreshes|resets|renews|in)\s+in\s+([^\r\n]+)/i);
+	const inMatch = rawText.match(/\bin\s+([^\r\n]+)/i);
 	if (inMatch) return normalizeGeminiDuration(inMatch[1].trim());
 
 	const durationOnlyMatch = rawText.match(/(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i);
