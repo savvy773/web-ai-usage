@@ -643,7 +643,7 @@ function hasGeminiModelScreen(output: string) {
 }
 
 function hasGeminiModelScreenText(value: string) {
-	return /Select Model|Model usage|Model Quota/i.test(value);
+	return /Select Model|Model usage|Model Quota|Models\s*&\s*Quota/i.test(value);
 }
 
 function isCodexReadyTail(tail: string) {
@@ -1457,7 +1457,11 @@ function parseDiagnostics(providerId: ProviderId, markers: string[], result: Pro
 	if (providerId !== 'agy') return [];
 
 	const parsedLabels = result.modelUsages.map((usage) => usage.label);
-	const detail = [`parsed-models=${result.modelUsages.length}/3`];
+	const groupedQuotaScreen = parsedLabels.some((label) =>
+		/^(?:Gemini|Claude\/GPT) · /i.test(label)
+	);
+	const expectedRows = groupedQuotaScreen ? 4 : 3;
+	const detail = [`parsed-models=${result.modelUsages.length}/${expectedRows}`];
 	if (parsedLabels.length > 0) {
 		detail.push(`parsed-labels=${parsedLabels.join('|')}`);
 	}
@@ -1484,7 +1488,7 @@ function parseDiagnostics(providerId: ProviderId, markers: string[], result: Pro
 	) {
 		missing.push('percent-reset-same-row');
 	}
-	if (result.modelUsages.length < 3) missing.push('3 model rows');
+	if (result.modelUsages.length < expectedRows) missing.push(`${expectedRows} quota rows`);
 
 	return [
 		...detail,
@@ -1514,7 +1518,9 @@ function usageMarkers(providerId: ProviderId, lines: string[]) {
 				isGeminiUsageRowCandidate(line.raw, line.normalized, index, lines, normalizedLines)
 			);
 		return [
-			normalizedLines.some((line) => /model usage|select model|model quota/i.test(line))
+			normalizedLines.some((line) =>
+				/model usage|select model|model quota|models\s*&\s*quota/i.test(line)
+			)
 				? 'model-screen'
 				: null,
 			normalizedLines.some((line) => />\s*\/(?:model|usage)\b/i.test(line)) ? 'slash-buffer' : null,
