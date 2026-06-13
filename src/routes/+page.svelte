@@ -466,7 +466,7 @@
 	}
 
 	function percentLabel(value: number | null) {
-		return value === null ? 'Unknown' : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
+		return value === null ? 'Unknown' : `${Math.round(value)}%`;
 	}
 
 	function heatColor(value: number | null) {
@@ -1046,12 +1046,20 @@
 														{model.label}
 													</div>
 												</div>
-												<div class="w-20 shrink-0 text-right">
+												<div class="w-24 shrink-0 text-right">
+													<div
+														class="text-[9px] font-medium tracking-[0.12em] text-foreground/40 uppercase"
+													>
+														Used
+													</div>
 													<div
 														class="text-xl font-bold tracking-tight"
 														style={`color: ${heatColor(model.percent)}`}
 													>
 														{percentLabel(model.percent)}
+													</div>
+													<div class="text-[10px] text-muted-foreground">
+														{percentLabel(100 - model.percent)} remaining
 													</div>
 												</div>
 											</div>
