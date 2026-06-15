@@ -4,19 +4,12 @@
 		Activity,
 		AlertTriangle,
 		Clock3,
-		Copy,
 		ExternalLink,
 		Power,
 		RefreshCcw,
-		ScrollText,
 		Terminal
 	} from '@lucide/svelte';
 
-	interface LogEntry {
-		level: 'log' | 'info' | 'warn' | 'error';
-		message: string;
-		timestamp: string;
-	}
 	interface AutoRefreshState {
 		enabled: boolean;
 		intervalMs: number;
@@ -66,6 +59,7 @@
 	let refreshing = $state(false);
 	let error = $state<string | null>(null);
 	let now = $state(new Date());
+	let nowCoarse = $state(new Date());
 	let autoRefresh = $state(true);
 	let autoRefreshIntervalMs = $state(DEFAULT_AUTO_REFRESH_INTERVAL_MS);
 	let refreshCooldownUntil = $state<number | null>(null);
@@ -74,18 +68,6 @@
 	let pageIsForeground = $state(false);
 	let visibleSyncInFlight = false;
 	let stopping = $state(false);
-	let showLogs = $state(true);
-	let logs = $state<LogEntry[]>([]);
-	let logContainer = $state<HTMLElement | null>(null);
-	let autoScrollLogs = $state(true);
-	let logsCopied = $state(false);
-	let logTab = $state<'logs' | 'checks'>('logs');
-
-	$effect(() => {
-		if (logs.length > 0 && logContainer && autoScrollLogs && showLogs) {
-			logContainer.scrollTop = logContainer.scrollHeight;
-		}
-	});
 
 	const providers = $derived(payload?.providers ?? []);
 	const serverRefreshing = $derived(payload?.refreshState?.refreshing ?? false);
@@ -148,25 +130,18 @@
 		const clockTimer = window.setInterval(() => {
 			now = new Date();
 		}, 1000);
+		const coarseTimer = window.setInterval(() => {
+			nowCoarse = new Date();
+		}, 60_000);
 		const visibleSyncTimer = window.setInterval(() => {
 			void syncVisibleDashboard();
 		}, VISIBLE_SYNC_INTERVAL_MS);
 
-		const es = new EventSource('/api/server/logs');
-		es.onmessage = (e) => {
-			const data = JSON.parse(e.data as string);
-			if (data.type === 'init') {
-				logs = data.entries as LogEntry[];
-			} else if (data.type === 'entry') {
-				logs = [...logs, data.entry as LogEntry].slice(-500);
-			}
-		};
-
 		return () => {
 			window.clearInterval(clockTimer);
+			window.clearInterval(coarseTimer);
 			window.clearInterval(visibleSyncTimer);
 			document.removeEventListener('visibilitychange', updateForegroundState);
-			es.close();
 		};
 	});
 
@@ -407,34 +382,6 @@
 		}
 	}
 
-	async function copyActivePanel() {
-		const text =
-			logTab === 'checks'
-				? checkItems()
-						.map((item) => `${item.provider} [${item.tone}] ${item.message}`)
-						.join('\n')
-				: logs
-						.map((entry) => `${formatLogTime(entry.timestamp)} [${entry.level}] ${entry.message}`)
-						.join('\n');
-		await navigator.clipboard.writeText(text);
-		logsCopied = true;
-		window.setTimeout(() => {
-			logsCopied = false;
-		}, 1200);
-	}
-
-	async function clearLogs() {
-		logs = [];
-		logsCopied = false;
-
-		try {
-			const response = await fetch('/api/server/logs', { method: 'DELETE' });
-			if (!response.ok) throw new Error(`Failed to clear server logs: ${response.status}`);
-		} catch (requestError) {
-			error = requestError instanceof Error ? requestError.message : 'Failed to clear server logs.';
-		}
-	}
-
 	function formatClock(value: Date) {
 		return CLOCK_FORMATTER.format(value);
 	}
@@ -495,7 +442,7 @@
 	}
 
 	function resetParts(window: UsageWindow) {
-		return resetPartsFromText(countdownText(window.resetAt, window.remainingText));
+		return resetPartsFromText(countdownText(window.resetAt, window.remainingText, nowCoarse));
 	}
 
 	function resetPartsFromText(text: string) {
@@ -521,13 +468,13 @@
 		return parts.filter((part) => part.visible);
 	}
 
-	function countdownText(resetAt: string | null, remainingText: string | null = null) {
+	function countdownText(resetAt: string | null, remainingText: string | null = null, nowValue: Date = now) {
 		if (resetAt) {
 			const parsed = Date.parse(resetAt);
 			if (Number.isNaN(parsed)) {
 				return remainingText ?? 'Unknown';
 			}
-			const diff = parsed - now.getTime();
+			const diff = parsed - nowValue.getTime();
 			if (diff <= 0) return '0m';
 
 			const minutes = Math.floor(diff / 60_000);
@@ -545,7 +492,7 @@
 	function weeklyPace(window: UsageWindow) {
 		if (window.id !== 'week' || window.percent === null || !window.resetAt) return null;
 
-		const remainingMs = Date.parse(window.resetAt) - now.getTime();
+		const remainingMs = Date.parse(window.resetAt) - nowCoarse.getTime();
 		if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
 
 		const target = weeklyTargetPercent(remainingMs);
@@ -678,52 +625,6 @@
 		return needsProviderCheck(provider) ? null : provider.message;
 	}
 
-	function checkItems() {
-		const items = providers.flatMap((provider) => {
-			if (needsProviderCheck(provider)) {
-				return [
-					{
-						provider: provider.name,
-						tone: 'warn',
-						message: provider.message.replace(/^Previous data kept;\s*/i, '')
-					}
-				];
-			}
-
-			if (provider.status !== 'ok') {
-				return [
-					{
-						provider: provider.name,
-						tone: provider.status === 'partial' ? 'warn' : 'error',
-						message: provider.message
-					}
-				];
-			}
-
-			return [];
-		});
-
-		if (payload?.refreshState?.error) {
-			items.push({
-				provider: 'Refresh',
-				tone: 'error',
-				message: payload.refreshState.error
-			});
-		}
-
-		return items;
-	}
-
-	function checkToneClass(tone: string) {
-		if (tone === 'error') return 'text-rose-300';
-		if (tone === 'warn') return 'text-amber-300';
-		return 'text-muted-foreground';
-	}
-
-	function activePanelHasContent() {
-		return logTab === 'checks' ? checkItems().length > 0 : logs.length > 0;
-	}
-
 	function openUsageUrl(url: string) {
 		window.open(url, '_blank', 'noopener,noreferrer');
 	}
@@ -736,17 +637,6 @@
 		} catch {
 			// Expected: server shutdown drops the connection
 		}
-	}
-
-	function logLevelClass(level: LogEntry['level']) {
-		if (level === 'warn') return 'text-amber-400';
-		if (level === 'error') return 'text-rose-400';
-		if (level === 'info') return 'text-cyan-400';
-		return 'text-foreground/70';
-	}
-
-	function formatLogTime(iso: string) {
-		return new Date(iso).toLocaleTimeString('en', { hour12: false });
 	}
 
 	function formatCountdown(timestamp: number | null) {
@@ -980,7 +870,7 @@
 									{#each WINDOW_ORDER as windowId (windowId)}
 										{@const usageWindow = provider.windows[windowId]}
 										<div
-											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 backdrop-blur-sm transition-all duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
+											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 transition-colors duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
 										>
 											<div class="flex items-center justify-between gap-3">
 												<div class="min-w-0">
@@ -1035,7 +925,7 @@
 								<div class="grid gap-2.5 grid-cols-1">
 									{#each (provider.modelUsages ?? []).filter((m) => m.label === 'Flash 3.5 (High)' || m.label === 'Sonnet 4.6' || /^(Gemini|Claude\/GPT) · (5h|Week)$/.test(m.label)) as model (model.label)}
 										<div
-											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 backdrop-blur-sm transition-all duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
+											class="flex min-h-[7.25rem] flex-col justify-between gap-2.5 rounded-lg border border-border/40 bg-slate-900/40 p-3.5 transition-colors duration-300 hover:border-cyan-500/25 hover:bg-slate-900/60 hover:shadow-sm"
 										>
 											<div class="flex items-center justify-between gap-3">
 												<div class="min-w-0">
@@ -1081,7 +971,7 @@
 													<div
 														class="flex items-center justify-end gap-0.5 font-mono text-xs font-semibold text-foreground/85"
 													>
-														{#each resetPartsFromText(countdownText(model.resetAt, model.remainingText)) as part (`${model.label}-sub-${part.unit || part.value}`)}
+														{#each resetPartsFromText(countdownText(model.resetAt, model.remainingText, nowCoarse)) as part (`${model.label}-sub-${part.unit || part.value}`)}
 															<span class={part.tone}>{part.value}{part.unit}</span>
 														{/each}
 													</div>
@@ -1146,122 +1036,4 @@
 		{/if}
 	</section>
 
-	{#if showLogs}
-		<section class="mx-auto max-w-7xl px-5 pb-6 sm:px-8 lg:px-10">
-			<div class="overflow-hidden rounded-md border bg-card">
-				<div class="flex items-center justify-between gap-3 border-b px-3 py-2">
-					<div class="flex items-center gap-1">
-						<button
-							type="button"
-							class={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors ${
-								logTab === 'logs'
-									? 'border-cyan-300/30 bg-cyan-500/10 text-cyan-200'
-									: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground'
-							}`}
-							onclick={() => (logTab = 'logs')}
-						>
-							<ScrollText class="size-3.5" />
-							Logs
-							<span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
-								>{logs.length}</span
-							>
-						</button>
-						<button
-							type="button"
-							class={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors ${
-								logTab === 'checks'
-									? 'border-amber-300/30 bg-amber-500/10 text-amber-200'
-									: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/70 hover:text-foreground'
-							}`}
-							onclick={() => (logTab = 'checks')}
-						>
-							<AlertTriangle class="size-3.5" />
-							Checks
-							<span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
-								>{checkItems().length}</span
-							>
-						</button>
-					</div>
-					<div class="flex items-center gap-1.5">
-						<label
-							class="flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm"
-							title="Auto scroll logs"
-						>
-							<input
-								type="checkbox"
-								bind:checked={autoScrollLogs}
-								class="size-2.5 accent-cyan-400"
-							/>
-							Auto
-						</label>
-						<button
-							type="button"
-							class="flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:shadow-none"
-							disabled={!activePanelHasContent()}
-							title={logTab === 'checks' ? 'Copy checks' : 'Copy logs'}
-							onclick={() => void copyActivePanel()}
-						>
-							<Copy class="size-3" />
-							{logsCopied ? 'Copied' : 'Copy'}
-						</button>
-						<button
-							type="button"
-							class="h-6 cursor-pointer rounded border border-transparent px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:shadow-none"
-							disabled={logs.length === 0}
-							title="Clear logs"
-							onclick={() => void clearLogs()}
-						>
-							Clear
-						</button>
-					</div>
-				</div>
-				<div
-					bind:this={logContainer}
-					class="log-scroll h-72 overflow-y-auto bg-background p-3 font-mono text-[10px] leading-4"
-				>
-					{#if logTab === 'checks'}
-						{@const checks = checkItems()}
-						{#if checks.length === 0}
-							<span class="text-muted-foreground/50">No checks needed</span>
-						{:else}
-							{#each checks as item (`${item.provider}-${item.message}`)}
-								<div class="flex gap-2 leading-5">
-									<span class={`w-24 shrink-0 ${checkToneClass(item.tone)}`}>{item.provider}</span>
-									<span class={checkToneClass(item.tone)}>{item.message}</span>
-								</div>
-							{/each}
-						{/if}
-					{:else if logs.length === 0}
-						<span class="text-muted-foreground/50">No logs yet</span>
-					{:else}
-						{#each logs as entry (entry.timestamp + entry.message)}
-							<div class="flex gap-2 leading-5">
-								<span class="shrink-0 text-muted-foreground/50"
-									>{formatLogTime(entry.timestamp)}</span
-								>
-								<span class="w-10 shrink-0 {logLevelClass(entry.level)}">[{entry.level}]</span>
-								<span class="{logLevelClass(entry.level)} break-all">{entry.message}</span>
-							</div>
-						{/each}
-					{/if}
-				</div>
-			</div>
-		</section>
-	{/if}
 </main>
-
-<style>
-	.log-scroll::-webkit-scrollbar {
-		width: 4px;
-	}
-	.log-scroll::-webkit-scrollbar-track {
-		background: transparent;
-	}
-	.log-scroll::-webkit-scrollbar-thumb {
-		background: oklch(0.4 0 0 / 0.35);
-		border-radius: 99px;
-	}
-	.log-scroll::-webkit-scrollbar-thumb:hover {
-		background: oklch(0.55 0 0 / 0.6);
-	}
-</style>
