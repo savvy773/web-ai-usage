@@ -27,7 +27,7 @@
 	const REFRESH_REQUEST_TIMEOUT_MS = 15_000;
 	const REFRESH_POLL_INTERVAL_MS = 1500;
 	const REFRESH_POLL_ATTEMPTS = 240;
-	const VISIBLE_SYNC_INTERVAL_MS = 10_000;
+	const VISIBLE_SYNC_INTERVAL_MS = 60_000;
 	const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 	const AUTO_REFRESH_INTERVAL_OPTIONS = [
 		{ label: '1m', value: 1 * 60 * 1000 },
@@ -146,7 +146,7 @@
 	});
 
 	async function loadUsage() {
-		loading = true;
+		if (!payload) loading = true;
 		error = null;
 
 		try {
