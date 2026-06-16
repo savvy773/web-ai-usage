@@ -468,7 +468,11 @@
 		return parts.filter((part) => part.visible);
 	}
 
-	function countdownText(resetAt: string | null, remainingText: string | null = null, nowValue: Date = now) {
+	function countdownText(
+		resetAt: string | null,
+		remainingText: string | null = null,
+		nowValue: Date = now
+	) {
 		if (resetAt) {
 			const parsed = Date.parse(resetAt);
 			if (Number.isNaN(parsed)) {
@@ -948,9 +952,6 @@
 													>
 														{percentLabel(model.percent)}
 													</div>
-													<div class="text-[10px] text-muted-foreground">
-														{percentLabel(100 - model.percent)} remaining
-													</div>
 												</div>
 											</div>
 
@@ -1035,5 +1036,4 @@
 			</div>
 		{/if}
 	</section>
-
 </main>
