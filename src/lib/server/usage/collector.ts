@@ -1133,6 +1133,7 @@ async function runPersistentRequest(
 			wroteSlashCommand = true;
 			const writeSlashCommandInput = () => {
 				markProviderCommandSent(providerId);
+				output = '';
 				persistentWrite(session, `${slashCommand}\r`);
 			};
 			if (options.clearInput) {
